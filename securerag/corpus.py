@@ -8,6 +8,7 @@ import re
 from securerag.backend_client import create_backend
 from securerag.builtin_schemes import StructuredPlugin
 from securerag.config import PrivacyConfig
+from securerag.dp_mechanism import DPMechanismPlugin
 from securerag.models import CorpusMeta, RawDocument
 from securerag.protocol import PrivacyProtocol
 from securerag.scheme_plugin import EncryptedSchemePlugin
@@ -95,9 +96,11 @@ class CorpusBuilder:
         self._backend = create_backend(backend_url)
         self._encrypted_search_scheme = "sse"
         self._structured_use_bigrams = True
+        self._dp_mechanism_name = "gaussian"
         self._epsilon = 1_000_000.0
         self._delta = 1e-5
         if config is not None and protocol.requires_budget:
+            self._dp_mechanism_name = config.dp_mechanism
             self._epsilon = float(config.epsilon)
             self._delta = float(config.delta)
 
@@ -145,6 +148,10 @@ class CorpusBuilder:
         self._delta = float(delta)
         return self
 
+    def with_dp_mechanism(self, mechanism: str) -> "CorpusBuilder":
+        self._dp_mechanism_name = mechanism
+        return self
+
     def add_directory(self, path: str, glob: str = "**/*.txt") -> "CorpusBuilder":
         for file in Path(path).glob(glob):
             if file.is_file():
@@ -159,6 +166,12 @@ class CorpusBuilder:
         chunks = self._backend.chunk(docs_payload, self._chunk_size, self._overlap)
         if self._sanitize:
             chunks = self._backend.sanitize(chunks)
+
+        if self._protocol is PrivacyProtocol.DIFF_PRIVACY:
+            import securerag.builtin_mechanisms  # noqa: F401
+
+            mechanism = DPMechanismPlugin.get(self._dp_mechanism_name)
+            chunks = mechanism.prepare_corpus(chunks)
 
         extras: dict = {}
         if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
@@ -252,6 +265,12 @@ class CorpusBuilder:
         chunks = self._local_chunk(self._docs, self._chunk_size, self._overlap)
         if self._sanitize:
             chunks = self._local_sanitize(chunks)
+
+        if self._protocol is PrivacyProtocol.DIFF_PRIVACY:
+            import securerag.builtin_mechanisms  # noqa: F401
+
+            mechanism = DPMechanismPlugin.get(self._dp_mechanism_name)
+            chunks = mechanism.prepare_corpus(chunks)
 
         extras: dict = {}
         if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:

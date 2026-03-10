@@ -8,3 +8,5 @@ securerag.egg-info/
 securerag-api*
 securerag-rs/target
 codereview.md
+refactor.md
+refactor_dp.md

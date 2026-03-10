@@ -51,7 +51,8 @@ class DiffPrivacyRetriever(PrivacyRetriever):
     def retrieve(self, query: str, round_n: int):
         sigma = float(self.config.noise_std)
         eps = self.budget.incremental_cost(sigma)
-        noised = self._backend.embed_with_noise(query=query, sigma=sigma)
+        base_embedding = self._backend.embed(query=query)
+        noised = self._dp_mechanism.noise(base_embedding, sigma, query=query)
         rows = self._backend.retrieve_by_embedding(
             index_id=self.corpus.index_id,
             embedding=noised,
@@ -65,6 +66,7 @@ class DiffPrivacyRetriever(PrivacyRetriever):
             round_n=round_n,
             original_query=query,
             noised_query_embedding=noised,
+            mechanism=type(self._dp_mechanism).__name__,
             epsilon_cost=eps,
             epsilon_remaining=self.budget.remaining,
         )

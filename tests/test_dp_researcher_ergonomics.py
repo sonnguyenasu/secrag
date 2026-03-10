@@ -15,6 +15,7 @@ from securerag.agent import SecureRAGAgent
 from securerag.budget import BudgetManager
 from securerag.config import PrivacyConfig
 from securerag.corpus import CorpusBuilder
+from securerag.dp_mechanism import DPMechanismPlugin
 from securerag.errors import BackendError
 from securerag.models import RawDocument
 from securerag.protocol import PrivacyProtocol
@@ -31,6 +32,9 @@ class _FakeDPBackend:
         self.retrieve_calls = 0
 
     def embed_with_noise(self, query: str, sigma: float) -> list[float]:
+        return [0.01 * (i + 1) for i in range(64)]
+
+    def embed(self, query: str) -> list[float]:
         return [0.01 * (i + 1) for i in range(64)]
 
     def retrieve_by_embedding(
@@ -77,6 +81,24 @@ class _AlwaysRetrieveLLM:
 
     def generate(self, query: str, context: list) -> str:
         return f"answer with {len(context)} context docs"
+
+
+class _ConstantNoiseMechanism(DPMechanismPlugin):
+    def __init__(self) -> None:
+        self.prepare_calls = 0
+
+    def noise(self, embedding: list[float], sigma: float, *, query: str = "") -> list[float]:
+        return [v + 1.0 for v in embedding]
+
+    def rdp_cost(self, sigma: float, alpha: float) -> float:
+        return 0.01 * alpha
+
+    def rdp_orders(self) -> list[float]:
+        return [2.0, 10.0]
+
+    def prepare_corpus(self, chunks: list[dict]) -> list[dict]:
+        self.prepare_calls += 1
+        return [{**c, "dp_marker": "prepared"} for c in chunks]
 
 
 def _free_port() -> int:
@@ -202,6 +224,7 @@ def test_corpus_builder_from_config_wires_server_dp_budget(monkeypatch: pytest.M
         protocol=PrivacyProtocol.DIFF_PRIVACY,
         epsilon=5.0,
         delta=1e-6,
+        noise_std=1.0,
         backend="memory://dp-backend",
     )
     docs = [RawDocument(doc_id="d1", text="risk evidence")]
@@ -246,3 +269,57 @@ def test_sim_server_dp_noise_is_reproducible_across_restarts() -> None:
 
     assert len(emb_a) == len(emb_b) == 64
     assert emb_a == pytest.approx(emb_b, rel=0.0, abs=1e-12)
+
+
+def test_custom_dp_mechanism_runs_without_framework_edits(monkeypatch: pytest.MonkeyPatch) -> None:
+    mechanism = _ConstantNoiseMechanism()
+    DPMechanismPlugin.register("constant_test", mechanism)
+
+    fake = _FakeDPBackend(fail_retrieve=False)
+    monkeypatch.setattr("securerag.retriever.create_backend", lambda _url: fake)
+
+    cfg = PrivacyConfig(
+        protocol=PrivacyProtocol.DIFF_PRIVACY,
+        dp_mechanism="constant_test",
+        epsilon=2.0,
+        delta=1e-5,
+        noise_std=1.0,
+        backend="fake://dp",
+    )
+    corpus = SimpleNamespace(protocol=PrivacyProtocol.DIFF_PRIVACY, index_id="idx-plugin")
+    retriever = PrivacyRetriever.from_config(cfg, corpus)
+
+    docs = retriever.retrieve("q3 risk", round_n=0)
+    assert docs
+    snap = retriever.budget.snapshot()
+    assert snap["mechanism"] == "_ConstantNoiseMechanism"
+    assert snap["spent"] > 0.0
+
+
+def test_corpus_builder_runs_dp_prepare_corpus_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    mechanism = _ConstantNoiseMechanism()
+    DPMechanismPlugin.register("prep_hook_test", mechanism)
+
+    captured: dict[str, list[dict]] = {}
+
+    class _CaptureBackend(_FakeDPBackend):
+        def build_index(self, protocol: str, chunks: list[dict], **kwargs) -> dict:
+            captured["chunks"] = chunks
+            return {"index_id": "capture-index", "doc_count": len(chunks)}
+
+    monkeypatch.setattr("securerag.corpus.create_backend", lambda _url: _CaptureBackend())
+
+    cfg = PrivacyConfig(
+        protocol=PrivacyProtocol.DIFF_PRIVACY,
+        dp_mechanism="prep_hook_test",
+        epsilon=5.0,
+        delta=1e-6,
+        noise_std=1.0,
+        backend="memory://dp-backend",
+    )
+    docs = [RawDocument(doc_id="d1", text="risk evidence")]
+    CorpusBuilder.from_config(cfg).add_documents(docs).build_local()
+
+    assert mechanism.prepare_calls == 1
+    assert captured["chunks"]
+    assert all(c.get("dp_marker") == "prepared" for c in captured["chunks"])

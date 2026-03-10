@@ -18,7 +18,16 @@ class PrivacyRetriever(ABC):
         self._validate_compatibility(config.protocol, corpus.protocol)
         self.config = config
         self.corpus = corpus
-        self.budget = BudgetManager(config)
+        if config.protocol.requires_budget:
+            import securerag.builtin_mechanisms  # noqa: F401
+            from securerag.dp_mechanism import DPMechanismPlugin
+
+            mechanism = DPMechanismPlugin.get(config.dp_mechanism)
+            self.budget = BudgetManager(config, mechanism=mechanism)
+            self._dp_mechanism = mechanism
+        else:
+            self.budget = BudgetManager(config)
+            self._dp_mechanism = None
         self._backend = create_backend(config.backend)
         self._logger = logging.getLogger("securerag.retriever")
         self._runtime_llm = None

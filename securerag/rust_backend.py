@@ -64,6 +64,9 @@ class RustBackend:
             {"index_id": index_id, "queries": queries, "top_k": top_k},
         )
 
+    def embed(self, query: str) -> list[float]:
+        return self._call("embed_with_noise", {"query": query, "sigma": 0.0})
+
     def embed_with_noise(self, query: str, sigma: float) -> list[float]:
         return self._call("embed_with_noise", {"query": query, "sigma": sigma})
 

@@ -41,6 +41,10 @@ class Backend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def embed(self, query: str) -> list[float]:
+        raise NotImplementedError
+
+    @abstractmethod
     def embed_with_noise(self, query: str, sigma: float) -> list[float]:
         raise NotImplementedError
 
@@ -112,6 +116,9 @@ class RemoteBackend(Backend):
             "batch_retrieve",
             {"index_id": index_id, "queries": queries, "top_k": top_k},
         )
+
+    def embed(self, query: str) -> list[float]:
+        return self._call("embed_with_noise", {"query": query, "sigma": 0.0})
 
     def embed_with_noise(self, query: str, sigma: float) -> list[float]:
         return self._call("embed_with_noise", {"query": query, "sigma": sigma})
@@ -222,6 +229,11 @@ class GrpcBackend(Backend):
         req = self._grpc_pb2.BatchRetrieveRequest(index_id=index_id, queries=queries, top_k=top_k)
         resp = self._invoke("BatchRetrieve", req)
         return [[self._struct_to_dict(r) for r in lst.rows] for lst in resp.rows]
+
+    def embed(self, query: str) -> list[float]:
+        req = self._grpc_pb2.EmbedWithNoiseRequest(query=query, sigma=0.0)
+        resp = self._invoke("EmbedWithNoise", req)
+        return [float(x) for x in resp.embedding]
 
     def embed_with_noise(self, query: str, sigma: float) -> list[float]:
         req = self._grpc_pb2.EmbedWithNoiseRequest(query=query, sigma=sigma)
