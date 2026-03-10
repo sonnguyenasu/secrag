@@ -36,6 +36,38 @@ class GenericCorpus(SecureCorpus):
         )
 
 
+class SSECorpus(SecureCorpus):
+    @property
+    def sse_key(self) -> str:
+        return str(self.extras.get("enc_key", ""))
+
+    @property
+    def scheme(self) -> str:
+        return str(self.extras.get("encrypted_search_scheme", "sse"))
+
+    def save(self, path: str) -> None:
+        Path(path).write_text(
+            f"protocol={self.protocol.name}\nindex_id={self.index_id}\nscheme={self.scheme}\n",
+            encoding="utf-8",
+        )
+
+
+class EmbeddingCorpus(SecureCorpus):
+    def save(self, path: str) -> None:
+        Path(path).write_text(
+            f"protocol={self.protocol.name}\nindex_id={self.index_id}\nindex_type=embedding\n",
+            encoding="utf-8",
+        )
+
+
+class PIRDatabase(SecureCorpus):
+    def save(self, path: str) -> None:
+        Path(path).write_text(
+            f"protocol={self.protocol.name}\nindex_id={self.index_id}\nindex_type=pir\n",
+            encoding="utf-8",
+        )
+
+
 class CorpusBuilder:
     def __init__(self, protocol: PrivacyProtocol, backend_url: str = "http://127.0.0.1:8099"):
         self._protocol = protocol
@@ -116,6 +148,27 @@ class CorpusBuilder:
             overlap=self._overlap,
             protocol=self._protocol.name,
         )
+        if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
+            return SSECorpus(
+                protocol=self._protocol,
+                meta=meta,
+                index_id=index_payload["index_id"],
+                extras=extras,
+            )
+        if self._protocol is PrivacyProtocol.DIFF_PRIVACY:
+            return EmbeddingCorpus(
+                protocol=self._protocol,
+                meta=meta,
+                index_id=index_payload["index_id"],
+                extras=extras,
+            )
+        if self._protocol is PrivacyProtocol.PIR:
+            return PIRDatabase(
+                protocol=self._protocol,
+                meta=meta,
+                index_id=index_payload["index_id"],
+                extras=extras,
+            )
         return GenericCorpus(
             protocol=self._protocol,
             meta=meta,

@@ -2,6 +2,8 @@
 
 This repository implements a runnable MVP of the SecureRAG API design using a pseudo-remote backend service on localhost.
 
+In addition to HTTP, the remote backend now supports a gRPC + Protobuf service endpoint.
+
 It also includes a Rust backend crate (`securerag-rs`) with a PyO3 bridge that can be selected via `backend="rust://local"` after building the extension.
 
 ## What is implemented
@@ -57,6 +59,24 @@ config = PrivacyConfig(
 ```
 
 If the extension is unavailable, the framework raises a clear error and you can continue using the pseudo-remote backend at `http://127.0.0.1:8099`.
+
+## gRPC backend (Protobuf)
+
+Start the gRPC server:
+
+```bash
+source .venv/bin/activate
+python -m securerag.grpc_server --host 127.0.0.1 --port 50051
+```
+
+Then configure backend:
+
+```python
+config = PrivacyConfig(
+  protocol=PrivacyProtocol.BASELINE,
+  backend="grpc://127.0.0.1:50051",
+)
+```
 
 ## Provider-agnostic LLM agent
 

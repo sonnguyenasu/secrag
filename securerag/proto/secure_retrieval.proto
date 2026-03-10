@@ -1,0 +1,150 @@
+syntax = "proto3";
+
+package securerag;
+
+import "google/protobuf/struct.proto";
+
+service SecureRetrieval {
+  rpc Chunk (ChunkRequest) returns (ChunkResponse);
+  rpc Sanitize (SanitizeRequest) returns (SanitizeResponse);
+  rpc BuildIndex (BuildIndexRequest) returns (BuildIndexResponse);
+  rpc GenerateDecoys (GenerateDecoysRequest) returns (GenerateDecoysResponse);
+  rpc BatchRetrieve (BatchRetrieveRequest) returns (BatchRetrieveResponse);
+  rpc EmbedWithNoise (EmbedWithNoiseRequest) returns (EmbedWithNoiseResponse);
+  rpc RetrieveByEmbedding (RetrieveByEmbeddingRequest) returns (RetrieveByEmbeddingResponse);
+  rpc SseGenerateKey (SseGenerateKeyRequest) returns (SseGenerateKeyResponse);
+  rpc SseEncryptTerms (SseEncryptTermsRequest) returns (SseEncryptTermsResponse);
+  rpc SseEncryptStructuredTerms (SseEncryptStructuredTermsRequest) returns (SseEncryptStructuredTermsResponse);
+  rpc SsePrepareChunks (SsePrepareChunksRequest) returns (SsePrepareChunksResponse);
+  rpc SseSearch (SseSearchRequest) returns (SseSearchResponse);
+  rpc StructuredSearch (StructuredSearchRequest) returns (StructuredSearchResponse);
+}
+
+message ChunkRequest {
+  repeated google.protobuf.Struct docs = 1;
+  int32 chunk_size = 2;
+  int32 overlap = 3;
+}
+
+message ChunkResponse {
+  repeated google.protobuf.Struct chunks = 1;
+}
+
+message SanitizeRequest {
+  repeated google.protobuf.Struct chunks = 1;
+}
+
+message SanitizeResponse {
+  repeated google.protobuf.Struct chunks = 1;
+}
+
+message BuildIndexRequest {
+  string protocol = 1;
+  repeated google.protobuf.Struct chunks = 2;
+}
+
+message BuildIndexResponse {
+  string index_id = 1;
+  int32 doc_count = 2;
+}
+
+message GenerateDecoysRequest {
+  string index_id = 1;
+  string query = 2;
+  int32 k = 3;
+}
+
+message GenerateDecoysResponse {
+  repeated string decoys = 1;
+}
+
+message BatchRetrieveRequest {
+  string index_id = 1;
+  repeated string queries = 2;
+  int32 top_k = 3;
+}
+
+message BatchRetrieveResponse {
+  repeated RetrievalList rows = 1;
+}
+
+message EmbedWithNoiseRequest {
+  string query = 1;
+  double sigma = 2;
+}
+
+message EmbedWithNoiseResponse {
+  repeated double embedding = 1;
+}
+
+message RetrieveByEmbeddingRequest {
+  string index_id = 1;
+  repeated double embedding = 2;
+  int32 top_k = 3;
+  string query = 4;
+}
+
+message RetrieveByEmbeddingResponse {
+  repeated google.protobuf.Struct rows = 1;
+}
+
+message SseGenerateKeyRequest {}
+
+message SseGenerateKeyResponse {
+  string key = 1;
+}
+
+message SseEncryptTermsRequest {
+  string text = 1;
+  string key = 2;
+}
+
+message SseEncryptTermsResponse {
+  repeated string terms = 1;
+}
+
+message SseEncryptStructuredTermsRequest {
+  string text = 1;
+  string key = 2;
+  bool use_bigrams = 3;
+}
+
+message SseEncryptStructuredTermsResponse {
+  repeated string terms = 1;
+}
+
+message SsePrepareChunksRequest {
+  repeated google.protobuf.Struct chunks = 1;
+  string key = 2;
+  string scheme = 3;
+  bool use_bigrams = 4;
+}
+
+message SsePrepareChunksResponse {
+  repeated google.protobuf.Struct chunks = 1;
+}
+
+message SseSearchRequest {
+  string index_id = 1;
+  repeated string enc_terms = 2;
+  int32 top_k = 3;
+}
+
+message SseSearchResponse {
+  repeated google.protobuf.Struct rows = 1;
+}
+
+message StructuredSearchRequest {
+  string index_id = 1;
+  repeated string struct_terms = 2;
+  int32 top_k = 3;
+}
+
+message StructuredSearchResponse {
+  repeated google.protobuf.Struct rows = 1;
+}
+
+message RetrievalList {
+  repeated google.protobuf.Struct rows = 1;
+}
+

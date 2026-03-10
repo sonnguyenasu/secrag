@@ -301,6 +301,69 @@ def test_sse_crypto_ops_parity_http_vs_rust():
             proc.kill()
 
 
+def test_top1_retrieval_parity_http_vs_grpc_baseline():
+    pytest.importorskip("grpc")
+
+    http_port = _free_port()
+    grpc_port = _free_port()
+    http_url = f"http://127.0.0.1:{http_port}"
+    grpc_target = f"grpc://127.0.0.1:{grpc_port}"
+
+    http_proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "securerag.sim_server:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(http_port),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    grpc_proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "securerag.grpc_server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(grpc_port),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    try:
+        _wait_for_health(http_url)
+        time.sleep(0.8)
+
+        docs = [
+            RawDocument(doc_id="q3", text="Q3 risk report highlights vendor concentration and delayed remediation."),
+            RawDocument(doc_id="policy", text="Security policy requires quarterly risk treatment tracking and owner assignment."),
+            RawDocument(doc_id="ops", text="Operational incidents increased in July due to queue saturation in ingestion service."),
+        ]
+
+        query = "Q3 risk"
+        http_top = _run_top1(PrivacyProtocol.BASELINE, http_url, docs, query)
+        grpc_top = _run_top1(PrivacyProtocol.BASELINE, grpc_target, docs, query)
+        assert grpc_top == http_top == "q3"
+    finally:
+        http_proc.terminate()
+        grpc_proc.terminate()
+        try:
+            http_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            http_proc.kill()
+        try:
+            grpc_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            grpc_proc.kill()
+
+
 def test_encrypted_search_unsupported_scheme_raises():
     docs = [RawDocument(doc_id="q3", text="Q3 risk report"), RawDocument(doc_id="p", text="security policy")]
     corpus = CorpusBuilder(PrivacyProtocol.ENCRYPTED_SEARCH).add_documents(docs).build()

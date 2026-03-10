@@ -8,7 +8,12 @@ use pyo3::types::{PyDict, PyList};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
+use crate::builders::{EmbeddingIndexBuilder, PlainIndexBuilder, UnsupportedBuilder};
+use crate::core::CorpusProcessor;
+use crate::core::RetrieverCore;
+use crate::engines::BaselineEngine;
 use crate::protocol::PrivacyProtocol;
+use crate::types::{Chunk, IndexPayload};
 
 #[derive(Clone)]
 struct Row {
@@ -75,24 +80,6 @@ fn encrypt_structured_terms(text: &str, key: &str, use_bigrams: bool) -> Vec<Str
     }
 
     out
-}
-
-fn lexical_score(query: &str, text: &str) -> f64 {
-    let q = tokenize(query);
-    let t = tokenize(text);
-    if q.is_empty() || t.is_empty() {
-        return 0.0;
-    }
-
-    let qset: std::collections::HashSet<&str> = q.iter().map(|s| s.as_str()).collect();
-    let tset: std::collections::HashSet<&str> = t.iter().map(|s| s.as_str()).collect();
-    let inter = qset.intersection(&tset).count() as f64;
-    let union = qset.union(&tset).count() as f64;
-    if union == 0.0 {
-        0.0
-    } else {
-        inter / union
-    }
 }
 
 #[pyclass]
@@ -251,12 +238,13 @@ impl BackendBridge {
             }
             "build_index" => {
                 let protocol_s: String = required_item(&payload, "protocol")?.extract()?;
-                let _protocol = PrivacyProtocol::from_wire(&protocol_s)
+                let protocol = PrivacyProtocol::from_wire(&protocol_s)
                     .ok_or_else(|| PyRuntimeError::new_err("invalid protocol"))?;
                 let chunks_any = required_item(&payload, "chunks")?;
                 let chunks_list = chunks_any.downcast::<PyList>()?;
 
                 let mut rows: Vec<Row> = Vec::new();
+                let mut core_chunks: Vec<Chunk> = Vec::new();
                 for item in chunks_list.iter() {
                     let row = item.downcast::<PyDict>()?;
                     let doc_id: String = row
@@ -275,6 +263,10 @@ impl BackendBridge {
                         .get_item("struct_terms")?
                         .and_then(|v| v.extract::<Vec<String>>().ok())
                         .unwrap_or_default();
+                    core_chunks.push(Chunk {
+                        doc_id: doc_id.clone(),
+                        text: text.clone(),
+                    });
                     rows.push(Row {
                         doc_id,
                         text,
@@ -282,6 +274,20 @@ impl BackendBridge {
                         struct_terms,
                     });
                 }
+
+                let processor: Box<dyn CorpusProcessor> = match protocol {
+                    PrivacyProtocol::Baseline | PrivacyProtocol::Obfuscation | PrivacyProtocol::EncryptedSearch => {
+                        Box::new(PlainIndexBuilder)
+                    }
+                    PrivacyProtocol::DiffPrivacy => Box::new(EmbeddingIndexBuilder),
+                    PrivacyProtocol::Pir => Box::new(UnsupportedBuilder {
+                        protocol_value: PrivacyProtocol::Pir,
+                    }),
+                };
+                let processed = processor.build(core_chunks);
+                let _processed_count = match processed {
+                    IndexPayload::Chunks(v) => v.len(),
+                };
 
                 let index_id = format!(
                     "rs-{}",
@@ -314,25 +320,27 @@ impl BackendBridge {
                     .get(&index_id)
                     .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
 
+                let engine_chunks: Vec<Chunk> = rows
+                    .iter()
+                    .map(|r| Chunk {
+                        doc_id: r.doc_id.clone(),
+                        text: r.text.clone(),
+                    })
+                    .collect();
+                let engine = BaselineEngine {
+                    chunks: std::sync::Arc::new(engine_chunks),
+                };
+
                 let all = PyList::empty(py);
                 for q in queries.iter() {
                     let query: String = q.extract()?;
-                    let mut scored: Vec<(f64, String, String)> = rows
-                        .iter()
-                        .map(|r| {
-                            let score = lexical_score(&query, &r.text);
-                            (score, r.doc_id.clone(), r.text.clone())
-                        })
-                        .collect();
-                    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
                     let out_q = PyList::empty(py);
-                    for (score, doc_id, text) in scored.into_iter().take(top_k) {
+                    for doc in engine.retrieve(&query, top_k) {
                         let row = PyDict::new(py);
-                        row.set_item("doc_id", doc_id)?;
-                        row.set_item("text", text)?;
+                        row.set_item("doc_id", doc.doc_id)?;
+                        row.set_item("text", doc.text)?;
                         row.set_item("metadata", PyDict::new(py))?;
-                        row.set_item("score", score)?;
+                        row.set_item("score", doc.score)?;
                         out_q.append(row)?;
                     }
                     all.append(out_q)?;
