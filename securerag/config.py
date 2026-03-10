@@ -28,8 +28,8 @@ class PrivacyConfig:
                 stacklevel=2,
             )
 
-    def for_protocol(self, protocol: PrivacyProtocol) -> "PrivacyConfig":
-        return dataclasses.replace(self, protocol=protocol)
+    def for_protocol(self, protocol: PrivacyProtocol, **kwargs) -> "PrivacyConfig":
+        return dataclasses.replace(self, protocol=protocol, **kwargs)
 
     def to_json(self) -> str:
         payload = dataclasses.asdict(self)

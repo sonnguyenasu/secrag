@@ -3,7 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use once_cell::sync::Lazy;
 use prost_types::{value, ListValue, Struct, Value};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use rand::RngCore;
+use rand_distr::{Distribution, Normal};
+use securerag_rs::dp::RDPAccountant;
 use sha2::{Digest, Sha256};
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -32,11 +36,14 @@ struct Row {
     struct_terms: Vec<String>,
 }
 
-#[derive(Clone)]
 struct Index {
     _protocol: String,
+    dp_budget: Option<RDPAccountant>,
     chunks: Vec<Row>,
 }
+
+const LEXICAL_WEIGHT: f64 = 0.65;
+const EMBEDDING_WEIGHT: f64 = 0.35;
 
 static INDEXES: Lazy<Arc<Mutex<HashMap<String, Index>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
@@ -108,11 +115,8 @@ fn embed(text: &str, dim: usize) -> Vec<f64> {
     }
     for tok in tokens {
         let h = Sha256::digest(tok.as_bytes());
-        let mut first8 = [0u8; 8];
-        first8.copy_from_slice(&h[0..8]);
-        let hv = u64::from_be_bytes(first8);
-        let idx = (hv as usize) % dim;
-        let sign = if ((hv >> 8) & 1) == 0 { 1.0 } else { -1.0 };
+        let idx = (h[31] as usize) % dim;
+        let sign = if (h[30] & 1) == 0 { 1.0 } else { -1.0 };
         vec[idx] += sign;
     }
     let norm = vec.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -272,7 +276,12 @@ impl SecureRetrieval for SecureRetrievalSvc {
         let index_id = format!("rsgrpc-{}", uuid::Uuid::new_v4());
         let doc_count = rows.len() as i32;
         let mut guard = INDEXES.lock().map_err(|_| Status::internal("index lock poisoned"))?;
-        guard.insert(index_id.clone(), Index { _protocol: req.protocol, chunks: rows });
+        let dp_budget = if req.protocol == "DiffPrivacy" {
+            Some(RDPAccountant::new(req.epsilon, req.delta))
+        } else {
+            None
+        };
+        guard.insert(index_id.clone(), Index { _protocol: req.protocol, dp_budget, chunks: rows });
         Ok(Response::new(BuildIndexResponse { index_id, doc_count }))
     }
 
@@ -327,19 +336,27 @@ impl SecureRetrieval for SecureRetrievalSvc {
     async fn embed_with_noise(&self, request: Request<EmbedWithNoiseRequest>) -> Result<Response<EmbedWithNoiseResponse>, Status> {
         let req = request.into_inner();
         let base = embed(&req.query, 64);
-        let out = base
-            .into_iter()
-            .enumerate()
-            .map(|(i, v)| v + req.sigma * ((i as f64) * 0.001))
-            .collect();
+        let seed = req
+            .query
+            .bytes()
+            .fold(0u64, |acc, b| acc.wrapping_mul(131).wrapping_add(b as u64));
+        let mut rng = StdRng::seed_from_u64(seed);
+        let normal = Normal::new(0.0, req.sigma).map_err(|e| Status::invalid_argument(format!("invalid sigma: {e}")))?;
+        let out = base.into_iter().map(|v| v + normal.sample(&mut rng)).collect();
         Ok(Response::new(EmbedWithNoiseResponse { embedding: out }))
     }
 
     async fn retrieve_by_embedding(&self, request: Request<RetrieveByEmbeddingRequest>) -> Result<Response<RetrieveByEmbeddingResponse>, Status> {
         let req = request.into_inner();
         let top_k = req.top_k.max(0) as usize;
-        let guard = INDEXES.lock().map_err(|_| Status::internal("index lock poisoned"))?;
-        let index = guard.get(&req.index_id).ok_or_else(|| Status::not_found("index not found"))?;
+        let mut guard = INDEXES.lock().map_err(|_| Status::internal("index lock poisoned"))?;
+        let index = guard.get_mut(&req.index_id).ok_or_else(|| Status::not_found("index not found"))?;
+
+        if let Some(budget) = index.dp_budget.as_mut() {
+            budget
+                .consume_rdp(req.sigma)
+                .map_err(Status::resource_exhausted)?;
+        }
 
         let qemb = req.embedding;
         let qtok: HashSet<String> = tokenize(&req.query).into_iter().collect();
@@ -358,7 +375,11 @@ impl SecureRetrieval for SecureRetrievalSvc {
                     let uni = qtok.union(&t).count() as f64;
                     if uni == 0.0 { 0.0 } else { inter / uni }
                 };
-                let score = if qtok.is_empty() { emb_score } else { 0.65 * lex + 0.35 * emb_score };
+                let score = if qtok.is_empty() {
+                    emb_score
+                } else {
+                    LEXICAL_WEIGHT * lex + EMBEDDING_WEIGHT * emb_score
+                };
                 (score, i)
             })
             .collect();

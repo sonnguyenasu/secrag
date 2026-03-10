@@ -1,3 +1,5 @@
+import math
+
 from securerag.errors import UnsupportedCapabilityError
 from securerag.protocol import PrivacyProtocol
 from securerag.retriever import PrivacyRetriever
@@ -69,7 +71,11 @@ class DiffPrivacyRetriever(PrivacyRetriever):
         return self._to_docs(rows)
 
     def privacy_cost(self, query: str) -> float:
-        return (1.0 / self.config.noise_std) ** 2 / 2.0
+        sigma = self.config.noise_std
+        delta = self.config.delta
+        orders = [2.0, 4.0, 8.0, 16.0, 32.0]
+        rdp_eps = [alpha / (2.0 * sigma**2) for alpha in orders]
+        return min(r + math.log(1.0 / delta) / (a - 1.0) for a, r in zip(orders, rdp_eps))
 
 
 @PrivacyRetriever.register(PrivacyProtocol.ENCRYPTED_SEARCH)

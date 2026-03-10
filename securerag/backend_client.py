@@ -49,7 +49,14 @@ class Backend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def build_index(self, protocol: str, chunks: list[dict]) -> dict:
+    def build_index(
+        self,
+        protocol: str,
+        chunks: list[dict],
+        *,
+        epsilon: float = 1_000_000.0,
+        delta: float = 1e-5,
+    ) -> dict:
         raise NotImplementedError
 
     @abstractmethod
@@ -142,8 +149,23 @@ class RemoteBackend(Backend):
             },
         )
 
-    def build_index(self, protocol: str, chunks: list[dict]) -> dict:
-        return self._call("build_index", {"protocol": protocol, "chunks": chunks})
+    def build_index(
+        self,
+        protocol: str,
+        chunks: list[dict],
+        *,
+        epsilon: float = 1_000_000.0,
+        delta: float = 1e-5,
+    ) -> dict:
+        return self._call(
+            "build_index",
+            {
+                "protocol": protocol,
+                "chunks": chunks,
+                "epsilon": epsilon,
+                "delta": delta,
+            },
+        )
 
     def generate_decoys(self, index_id: str, query: str, k: int) -> list[str]:
         return self._call("generate_decoys", {"index_id": index_id, "query": query, "k": k})
@@ -285,10 +307,19 @@ class GrpcBackend(Backend):
         resp = self._invoke("SsePrepareChunks", req)
         return [self._struct_to_dict(c) for c in resp.chunks]
 
-    def build_index(self, protocol: str, chunks: list[dict]) -> dict:
+    def build_index(
+        self,
+        protocol: str,
+        chunks: list[dict],
+        *,
+        epsilon: float = 1_000_000.0,
+        delta: float = 1e-5,
+    ) -> dict:
         req = self._grpc_pb2.BuildIndexRequest(
             protocol=protocol,
             chunks=[self._dict_to_struct(c) for c in chunks],
+            epsilon=epsilon,
+            delta=delta,
         )
         resp = self._invoke("BuildIndex", req)
         return {"index_id": str(resp.index_id), "doc_count": int(resp.doc_count)}
@@ -321,6 +352,7 @@ class GrpcBackend(Backend):
             embedding=embedding,
             top_k=top_k,
             query=query or "",
+            sigma=float(sigma if sigma is not None else 1.0),
         )
         resp = self._invoke("RetrieveByEmbedding", req)
         return [self._struct_to_dict(r) for r in resp.rows]

@@ -169,13 +169,19 @@ def _run_top1(
     query: str,
     encrypted_scheme: str | None = None,
 ) -> str:
-    builder = CorpusBuilder(protocol, backend_url=backend).with_chunk_size(120).add_documents(docs)
+    epsilon = 500.0 if protocol is PrivacyProtocol.DIFF_PRIVACY else 1_000_000.0
+    builder = (
+        CorpusBuilder(protocol, backend_url=backend)
+        .with_privacy_budget(epsilon=epsilon, delta=1e-5)
+        .with_chunk_size(120)
+        .add_documents(docs)
+    )
     if protocol is PrivacyProtocol.ENCRYPTED_SEARCH and encrypted_scheme:
         builder = builder.with_encrypted_search_scheme(encrypted_scheme)
     corpus = builder.build()
     cfg = PrivacyConfig(
         protocol=protocol,
-        epsilon=500.0 if protocol is PrivacyProtocol.DIFF_PRIVACY else 1.0,
+        epsilon=epsilon,
         noise_std=0.2,
         top_k=3,
         k_decoys=3,
@@ -305,6 +311,46 @@ def test_sse_crypto_ops_parity_http_vs_rust():
             "structured",
             use_bigrams=True,
         )
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_embed_with_noise_parity_http_vs_rust_sigma_zero():
+    pytest.importorskip("securerag_rs")
+
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "securerag.sim_server:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    try:
+        _wait_for_health(base_url)
+
+        http_backend = create_backend(base_url)
+        rust_backend = create_backend("rust://local")
+
+        query = "Q3 risks include vendor concentration and delayed remediation"
+        http_emb = http_backend.embed_with_noise(query=query, sigma=0.0)
+        rust_emb = rust_backend.embed_with_noise(query=query, sigma=0.0)
+
+        assert len(http_emb) == len(rust_emb) == 64
+        assert rust_emb == pytest.approx(http_emb, rel=0.0, abs=1e-12)
     finally:
         proc.terminate()
         try:

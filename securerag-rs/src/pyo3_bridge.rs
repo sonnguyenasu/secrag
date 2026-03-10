@@ -5,16 +5,22 @@ use once_cell::sync::Lazy;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use rand::RngCore;
+use rand_distr::{Distribution, Normal};
 use sha2::{Digest, Sha256};
 
 use crate::builders::{EmbeddingIndexBuilder, PlainIndexBuilder, UnsupportedBuilder};
 use crate::core::CorpusProcessor;
 use crate::core::RetrieverCore;
 use crate::dp::RDPAccountant;
-use crate::engines::{BaselineEngine, DPMechanism};
+use crate::engines::BaselineEngine;
 use crate::protocol::PrivacyProtocol;
 use crate::types::{Chunk, IndexPayload};
+
+const LEXICAL_WEIGHT: f64 = 0.65;
+const EMBEDDING_WEIGHT: f64 = 0.35;
 
 #[derive(Clone)]
 struct Row {
@@ -61,11 +67,8 @@ fn embed(text: &str, dim: usize) -> Vec<f64> {
     }
     for tok in tokens {
         let h = Sha256::digest(tok.as_bytes());
-        let mut first8 = [0u8; 8];
-        first8.copy_from_slice(&h[0..8]);
-        let hv = u64::from_be_bytes(first8);
-        let idx = (hv as usize) % dim;
-        let sign = if ((hv >> 8) & 1) == 0 { 1.0 } else { -1.0 };
+        let idx = (h[31] as usize) % dim;
+        let sign = if (h[30] & 1) == 0 { 1.0 } else { -1.0 };
         vec[idx] += sign;
     }
     let norm = vec.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -293,6 +296,18 @@ impl BackendBridge {
             }
             "build_index" => {
                 let protocol_s: String = required_item(&payload, "protocol")?.extract()?;
+                let epsilon: f64 = payload
+                    .get_item("epsilon")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<f64>().ok())
+                    .unwrap_or(1_000_000.0);
+                let delta: f64 = payload
+                    .get_item("delta")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<f64>().ok())
+                    .unwrap_or(1e-5);
                 let protocol = PrivacyProtocol::from_wire(&protocol_s)
                     .ok_or_else(|| PyRuntimeError::new_err("invalid protocol"))?;
                 let chunks_any = required_item(&payload, "chunks")?;
@@ -361,7 +376,7 @@ impl BackendBridge {
                     .lock()
                     .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
                 let dp_budget = if protocol == PrivacyProtocol::DiffPrivacy {
-                    Some(Arc::new(Mutex::new(RDPAccountant::new(1_000_000.0, 1e-5))))
+                    Some(Arc::new(Mutex::new(RDPAccountant::new(epsilon, delta))))
                 } else {
                     None
                 };
@@ -534,10 +549,16 @@ impl BackendBridge {
                 let query: String = required_item(&payload, "query")?.extract()?;
                 let sigma: f64 = required_item(&payload, "sigma")?.extract()?;
                 let base = embed(&query, 64);
-                let mut out = Vec::new();
-                for (i, v) in base.iter().enumerate() {
-                    out.push(*v + sigma * ((i as f64) * 0.001));
-                }
+                let seed = query
+                    .bytes()
+                    .fold(0u64, |acc, b| acc.wrapping_mul(131).wrapping_add(b as u64));
+                let mut rng = StdRng::seed_from_u64(seed);
+                let normal = Normal::new(0.0, sigma)
+                    .map_err(|e| PyRuntimeError::new_err(format!("invalid sigma: {e}")))?;
+                let out: Vec<f64> = base
+                    .iter()
+                    .map(|v| *v + normal.sample(&mut rng))
+                    .collect();
                 Ok(PyList::new(py, out)?.into_any().unbind())
             }
             "retrieve_by_embedding" => {
@@ -567,20 +588,10 @@ impl BackendBridge {
 
                 if state.protocol == PrivacyProtocol::DiffPrivacy {
                     if let Some(budget) = &state.dp_budget {
-                        let engine_chunks: Vec<Chunk> = state
-                            .rows
-                            .iter()
-                            .map(|r| Chunk {
-                                doc_id: r.doc_id.clone(),
-                                text: r.text.clone(),
-                            })
-                            .collect();
-                        let engine = DPMechanism {
-                            chunks: Arc::new(engine_chunks),
-                            sigma,
-                            budget: budget.clone(),
-                        };
-                        let _ = engine.retrieve(&query, top_k);
+                        let mut b = budget
+                            .lock()
+                            .map_err(|_| PyRuntimeError::new_err("budget lock poisoned"))?;
+                        b.consume_rdp(sigma).map_err(PyRuntimeError::new_err)?;
                     }
                 }
 
@@ -593,7 +604,7 @@ impl BackendBridge {
                             emb_score
                         } else {
                             let lex_score = lexical_jaccard(&query, &r.text);
-                            0.65 * lex_score + 0.35 * emb_score
+                            LEXICAL_WEIGHT * lex_score + EMBEDDING_WEIGHT * emb_score
                         };
                         (score, r.doc_id.clone(), r.text.clone())
                     })

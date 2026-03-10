@@ -78,6 +78,8 @@ class CorpusBuilder:
         self._backend = create_backend(backend_url)
         self._encrypted_search_scheme = "sse"
         self._structured_use_bigrams = True
+        self._epsilon = 1_000_000.0
+        self._delta = 1e-5
 
     def with_chunk_size(self, n: int) -> "CorpusBuilder":
         self._chunk_size = n
@@ -103,6 +105,11 @@ class CorpusBuilder:
 
     def add_documents(self, docs: list[RawDocument]) -> "CorpusBuilder":
         self._docs.extend(docs)
+        return self
+
+    def with_privacy_budget(self, epsilon: float, delta: float) -> "CorpusBuilder":
+        self._epsilon = float(epsilon)
+        self._delta = float(delta)
         return self
 
     def add_directory(self, path: str, glob: str = "**/*.txt") -> "CorpusBuilder":
@@ -141,7 +148,12 @@ class CorpusBuilder:
             extras["enc_key"] = enc_key
             extras["encrypted_search_scheme"] = scheme
 
-        index_payload = self._backend.build_index(self._protocol.wire_name, chunks)
+        index_payload = self._backend.build_index(
+            self._protocol.wire_name,
+            chunks,
+            epsilon=self._epsilon,
+            delta=self._delta,
+        )
         meta = CorpusMeta(
             doc_count=index_payload["doc_count"],
             chunk_size=self._chunk_size,

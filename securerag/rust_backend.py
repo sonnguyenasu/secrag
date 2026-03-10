@@ -69,8 +69,23 @@ class RustBackend:
             },
         )
 
-    def build_index(self, protocol: str, chunks: list[dict]) -> dict:
-        return self._call("build_index", {"protocol": protocol, "chunks": chunks})
+    def build_index(
+        self,
+        protocol: str,
+        chunks: list[dict],
+        *,
+        epsilon: float = 1_000_000.0,
+        delta: float = 1e-5,
+    ) -> dict:
+        return self._call(
+            "build_index",
+            {
+                "protocol": protocol,
+                "chunks": chunks,
+                "epsilon": epsilon,
+                "delta": delta,
+            },
+        )
 
     def generate_decoys(self, index_id: str, query: str, k: int) -> list[str]:
         return self._call("generate_decoys", {"index_id": index_id, "query": query, "k": k})

@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct RDPAccountant {
     pub epsilon_max: f64,
     pub delta: f64,

@@ -14,6 +14,8 @@ from pydantic import BaseModel
 
 app = FastAPI(title="SecureRAG pseudo-remote server", version="0.1.0")
 _INDEXES: dict[str, dict[str, Any]] = {}
+LEXICAL_WEIGHT = 0.65
+EMBEDDING_WEIGHT = 0.35
 
 
 class RPCRequest(BaseModel):
@@ -84,7 +86,7 @@ def _retrieve_embedding(index: dict[str, Any], emb: list[float], top_k: int, que
             inter = len(q_tokens & t_tokens)
             union = len(q_tokens | t_tokens) or 1
             lex_score = inter / union
-            score = 0.65 * lex_score + 0.35 * emb_score
+            score = LEXICAL_WEIGHT * lex_score + EMBEDDING_WEIGHT * emb_score
         else:
             score = emb_score
         scored.append(
@@ -216,13 +218,21 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
 
         if op == "build_index":
             protocol = p["protocol"]
+            epsilon = float(p.get("epsilon", 1_000_000.0))
+            delta = float(p.get("delta", 1e-5))
             chunks = p["chunks"]
             for c in chunks:
                 c["embedding"] = _embed(c["text"])
                 c["enc_terms"] = c.get("enc_terms", [])
                 c["struct_terms"] = c.get("struct_terms", [])
             index_id = str(uuid.uuid4())
-            _INDEXES[index_id] = {"protocol": protocol, "chunks": chunks}
+            _INDEXES[index_id] = {
+                "protocol": protocol,
+                "chunks": chunks,
+                "epsilon": epsilon,
+                "delta": delta,
+                "spent": 0.0,
+            }
             return {"ok": True, "data": {"index_id": index_id, "doc_count": len(chunks)}}
 
         if op == "sse_search":
@@ -297,6 +307,15 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
             emb = p["embedding"]
             top_k = int(p["top_k"])
             query = p.get("query")
+            sigma = float(p.get("sigma", 1.0))
+            if index.get("protocol") == "DiffPrivacy" and sigma > 0.0:
+                orders = [2.0, 4.0, 8.0, 16.0, 32.0]
+                rdp = [a / (2.0 * sigma * sigma) for a in orders]
+                delta = float(index.get("delta", 1e-5))
+                eps = min(r + math.log(1.0 / delta) / (a - 1.0) for a, r in zip(orders, rdp))
+                index["spent"] = float(index.get("spent", 0.0)) + eps
+                if index["spent"] > float(index.get("epsilon", 1.0)):
+                    return {"ok": False, "error": "DP budget exhausted"}
             out = _retrieve_embedding(index, emb, top_k, query=query)
             return {"ok": True, "data": out}
 
