@@ -1,6 +1,8 @@
 pub mod builders;
+pub mod builtin_schemes;
 pub mod core;
 pub mod dp;
+pub mod encrypted_scheme;
 pub mod engines;
 pub mod protocol;
 pub mod types;

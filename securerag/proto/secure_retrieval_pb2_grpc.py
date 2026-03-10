@@ -69,35 +69,10 @@ class SecureRetrievalStub(object):
                 request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.RetrieveByEmbeddingRequest.SerializeToString,
                 response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.RetrieveByEmbeddingResponse.FromString,
                 _registered_method=True)
-        self.SseGenerateKey = channel.unary_unary(
-                '/securerag.SecureRetrieval/SseGenerateKey',
-                request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseGenerateKeyRequest.SerializeToString,
-                response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseGenerateKeyResponse.FromString,
-                _registered_method=True)
-        self.SseEncryptTerms = channel.unary_unary(
-                '/securerag.SecureRetrieval/SseEncryptTerms',
-                request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptTermsRequest.SerializeToString,
-                response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptTermsResponse.FromString,
-                _registered_method=True)
-        self.SseEncryptStructuredTerms = channel.unary_unary(
-                '/securerag.SecureRetrieval/SseEncryptStructuredTerms',
-                request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptStructuredTermsRequest.SerializeToString,
-                response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptStructuredTermsResponse.FromString,
-                _registered_method=True)
-        self.SsePrepareChunks = channel.unary_unary(
-                '/securerag.SecureRetrieval/SsePrepareChunks',
-                request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SsePrepareChunksRequest.SerializeToString,
-                response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SsePrepareChunksResponse.FromString,
-                _registered_method=True)
-        self.SseSearch = channel.unary_unary(
-                '/securerag.SecureRetrieval/SseSearch',
-                request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseSearchRequest.SerializeToString,
-                response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseSearchResponse.FromString,
-                _registered_method=True)
-        self.StructuredSearch = channel.unary_unary(
-                '/securerag.SecureRetrieval/StructuredSearch',
-                request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.StructuredSearchRequest.SerializeToString,
-                response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.StructuredSearchResponse.FromString,
+        self.EncryptedSearch = channel.unary_unary(
+                '/securerag.SecureRetrieval/EncryptedSearch',
+                request_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.EncryptedSearchRequest.SerializeToString,
+                response_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.EncryptedSearchResponse.FromString,
                 _registered_method=True)
 
 
@@ -146,37 +121,7 @@ class SecureRetrievalServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def SseGenerateKey(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def SseEncryptTerms(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def SseEncryptStructuredTerms(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def SsePrepareChunks(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def SseSearch(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def StructuredSearch(self, request, context):
+    def EncryptedSearch(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -220,35 +165,10 @@ def add_SecureRetrievalServicer_to_server(servicer, server):
                     request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.RetrieveByEmbeddingRequest.FromString,
                     response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.RetrieveByEmbeddingResponse.SerializeToString,
             ),
-            'SseGenerateKey': grpc.unary_unary_rpc_method_handler(
-                    servicer.SseGenerateKey,
-                    request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseGenerateKeyRequest.FromString,
-                    response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseGenerateKeyResponse.SerializeToString,
-            ),
-            'SseEncryptTerms': grpc.unary_unary_rpc_method_handler(
-                    servicer.SseEncryptTerms,
-                    request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptTermsRequest.FromString,
-                    response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptTermsResponse.SerializeToString,
-            ),
-            'SseEncryptStructuredTerms': grpc.unary_unary_rpc_method_handler(
-                    servicer.SseEncryptStructuredTerms,
-                    request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptStructuredTermsRequest.FromString,
-                    response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptStructuredTermsResponse.SerializeToString,
-            ),
-            'SsePrepareChunks': grpc.unary_unary_rpc_method_handler(
-                    servicer.SsePrepareChunks,
-                    request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SsePrepareChunksRequest.FromString,
-                    response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SsePrepareChunksResponse.SerializeToString,
-            ),
-            'SseSearch': grpc.unary_unary_rpc_method_handler(
-                    servicer.SseSearch,
-                    request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseSearchRequest.FromString,
-                    response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.SseSearchResponse.SerializeToString,
-            ),
-            'StructuredSearch': grpc.unary_unary_rpc_method_handler(
-                    servicer.StructuredSearch,
-                    request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.StructuredSearchRequest.FromString,
-                    response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.StructuredSearchResponse.SerializeToString,
+            'EncryptedSearch': grpc.unary_unary_rpc_method_handler(
+                    servicer.EncryptedSearch,
+                    request_deserializer=securerag_dot_proto_dot_secure__retrieval__pb2.EncryptedSearchRequest.FromString,
+                    response_serializer=securerag_dot_proto_dot_secure__retrieval__pb2.EncryptedSearchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -451,7 +371,7 @@ class SecureRetrieval(object):
             _registered_method=True)
 
     @staticmethod
-    def SseGenerateKey(request,
+    def EncryptedSearch(request,
             target,
             options=(),
             channel_credentials=None,
@@ -464,144 +384,9 @@ class SecureRetrieval(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/securerag.SecureRetrieval/SseGenerateKey',
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseGenerateKeyRequest.SerializeToString,
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseGenerateKeyResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def SseEncryptTerms(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/securerag.SecureRetrieval/SseEncryptTerms',
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptTermsRequest.SerializeToString,
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptTermsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def SseEncryptStructuredTerms(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/securerag.SecureRetrieval/SseEncryptStructuredTerms',
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptStructuredTermsRequest.SerializeToString,
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseEncryptStructuredTermsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def SsePrepareChunks(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/securerag.SecureRetrieval/SsePrepareChunks',
-            securerag_dot_proto_dot_secure__retrieval__pb2.SsePrepareChunksRequest.SerializeToString,
-            securerag_dot_proto_dot_secure__retrieval__pb2.SsePrepareChunksResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def SseSearch(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/securerag.SecureRetrieval/SseSearch',
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseSearchRequest.SerializeToString,
-            securerag_dot_proto_dot_secure__retrieval__pb2.SseSearchResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def StructuredSearch(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/securerag.SecureRetrieval/StructuredSearch',
-            securerag_dot_proto_dot_secure__retrieval__pb2.StructuredSearchRequest.SerializeToString,
-            securerag_dot_proto_dot_secure__retrieval__pb2.StructuredSearchResponse.FromString,
+            '/securerag.SecureRetrieval/EncryptedSearch',
+            securerag_dot_proto_dot_secure__retrieval__pb2.EncryptedSearchRequest.SerializeToString,
+            securerag_dot_proto_dot_secure__retrieval__pb2.EncryptedSearchResponse.FromString,
             options,
             channel_credentials,
             insecure,

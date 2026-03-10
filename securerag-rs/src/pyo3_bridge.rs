@@ -4,10 +4,9 @@ use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyAny, PyDict, PyList};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use rand::RngCore;
 use rand_distr::{Distribution, Normal};
 use sha2::{Digest, Sha256};
 
@@ -22,20 +21,19 @@ use crate::types::{Chunk, IndexPayload};
 const LEXICAL_WEIGHT: f64 = 0.65;
 const EMBEDDING_WEIGHT: f64 = 0.35;
 
-#[derive(Clone)]
 struct Row {
     doc_id: String,
     text: String,
     embedding: Vec<f64>,
-    enc_terms: Vec<String>,
-    struct_terms: Vec<String>,
+    scheme_data: Py<PyDict>,
 }
 
-#[derive(Clone)]
 struct IndexState {
     protocol: PrivacyProtocol,
     rows: Vec<Row>,
     dp_budget: Option<Arc<Mutex<RDPAccountant>>>,
+    enc_plugin: Option<Py<PyAny>>,
+    server_index: Option<Py<PyAny>>,
 }
 
 static INDEXES: Lazy<Mutex<HashMap<String, IndexState>>> =
@@ -100,44 +98,6 @@ fn lexical_jaccard(query: &str, text: &str) -> f64 {
     let inter = qset.intersection(&tset).count() as f64;
     let union = qset.union(&tset).count() as f64;
     if union == 0.0 { 0.0 } else { inter / union }
-}
-
-fn generate_sse_key() -> String {
-    let mut bytes = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-fn encrypt_token(token: &str, key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{}:{}", key, token).as_bytes());
-    let digest = hasher.finalize();
-    let hex: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
-    hex.chars().take(24).collect()
-}
-
-fn encrypt_terms(text: &str, key: &str) -> Vec<String> {
-    tokenize(text)
-        .into_iter()
-        .map(|t| encrypt_token(&t, key))
-        .collect()
-}
-
-fn encrypt_structured_terms(text: &str, key: &str, use_bigrams: bool) -> Vec<String> {
-    let tokens = tokenize(text);
-    let mut out: Vec<String> = tokens
-        .iter()
-        .map(|t| encrypt_token(&format!("tok:{}", t), key))
-        .collect();
-
-    if use_bigrams && tokens.len() >= 2 {
-        for i in 0..(tokens.len() - 1) {
-            let bg = format!("{}_{}", tokens[i], tokens[i + 1]);
-            out.push(encrypt_token(&format!("bi:{}", bg), key));
-        }
-    }
-
-    out
 }
 
 #[pyclass]
@@ -223,76 +183,30 @@ impl BackendBridge {
                 let chunks_any = required_item(&payload, "chunks")?;
                 Ok(chunks_any.into_any().unbind())
             }
-            "sse_generate_key" => Ok(generate_sse_key().into_pyobject(py)?.into_any().unbind()),
-            "sse_encrypt_terms" => {
-                let text: String = required_item(&payload, "text")?.extract()?;
-                let key: String = required_item(&payload, "key")?.extract()?;
-                let out = encrypt_terms(&text, &key);
-                Ok(PyList::new(py, out)?.into_any().unbind())
-            }
-            "sse_encrypt_structured_terms" => {
-                let text: String = required_item(&payload, "text")?.extract()?;
-                let key: String = required_item(&payload, "key")?.extract()?;
-                let use_bigrams: bool = payload
-                    .get_item("use_bigrams")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.extract::<bool>().ok())
-                    .unwrap_or(true);
-                let out = encrypt_structured_terms(&text, &key, use_bigrams);
-                Ok(PyList::new(py, out)?.into_any().unbind())
-            }
-            "sse_prepare_chunks" => {
-                let chunks_any = required_item(&payload, "chunks")?;
-                let chunks_list = chunks_any.downcast::<PyList>()?;
-                let key: String = required_item(&payload, "key")?.extract()?;
-                let scheme = payload
-                    .get_item("scheme")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.extract::<String>().ok())
-                    .unwrap_or_else(|| "sse".to_string())
-                    .to_ascii_lowercase();
-                let use_bigrams: bool = payload
-                    .get_item("use_bigrams")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.extract::<bool>().ok())
-                    .unwrap_or(true);
+            "encrypted_search" => {
+                let index_id: String = required_item(&payload, "index_id")?.extract()?;
+                let top_k: usize = required_item(&payload, "top_k")?.extract()?;
+                let enc_query = required_item(&payload, "encrypted_query")?;
 
-                let out = PyList::empty(py);
-                for item in chunks_list.iter() {
-                    let row = item.downcast::<PyDict>()?;
-                    let text: String = row
-                        .get_item("text")?
-                        .ok_or_else(|| PyRuntimeError::new_err("missing text"))?
-                        .extract()?;
+                let guard = INDEXES
+                    .lock()
+                    .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
+                let state = guard
+                    .get(&index_id)
+                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
 
-                    let cloned = PyDict::new(py);
-                    for (k, v) in row.iter() {
-                        cloned.set_item(k, v)?;
-                    }
+                let plugin = state.enc_plugin.as_ref().ok_or_else(|| {
+                    PyRuntimeError::new_err("index was not built with an encrypted scheme")
+                })?;
+                let srv_idx = state
+                    .server_index
+                    .as_ref()
+                    .ok_or_else(|| PyRuntimeError::new_err("server index not initialised"))?;
 
-                    match scheme.as_str() {
-                        "sse" => {
-                            let enc_terms = encrypt_terms(&text, &key);
-                            cloned.set_item("enc_terms", PyList::new(py, enc_terms)?)?;
-                        }
-                        "structured" | "structured_encryption" => {
-                            let struct_terms = encrypt_structured_terms(&text, &key, use_bigrams);
-                            cloned.set_item("struct_terms", PyList::new(py, struct_terms)?)?;
-                        }
-                        other => {
-                            return Err(PyRuntimeError::new_err(format!(
-                                "unknown encrypted search scheme: {}",
-                                other
-                            )));
-                        }
-                    }
-
-                    out.append(cloned)?;
-                }
-                Ok(out.into_any().unbind())
+                let results = plugin
+                    .bind(py)
+                    .call_method1("search", (srv_idx.bind(py), enc_query, top_k as i64))?;
+                Ok(results.into_any().unbind())
             }
             "build_index" => {
                 let protocol_s: String = required_item(&payload, "protocol")?.extract()?;
@@ -325,14 +239,15 @@ impl BackendBridge {
                         .get_item("text")?
                         .ok_or_else(|| PyRuntimeError::new_err("missing text"))?
                         .extract()?;
-                    let enc_terms: Vec<String> = row
-                        .get_item("enc_terms")?
-                        .and_then(|v| v.extract::<Vec<String>>().ok())
-                        .unwrap_or_default();
-                    let struct_terms: Vec<String> = row
-                        .get_item("struct_terms")?
-                        .and_then(|v| v.extract::<Vec<String>>().ok())
-                        .unwrap_or_default();
+                    let scheme_data_dict = PyDict::new(py);
+                    if let Some(v) = row.get_item("scheme_data")? {
+                        if let Ok(d) = v.downcast::<PyDict>() {
+                            for (k, val) in d.iter() {
+                                scheme_data_dict.set_item(k, val)?;
+                            }
+                        }
+                    }
+                    let scheme_data = scheme_data_dict.unbind();
                     core_chunks.push(Chunk {
                         doc_id: doc_id.clone(),
                         text: text.clone(),
@@ -341,8 +256,7 @@ impl BackendBridge {
                         doc_id,
                         text,
                         embedding: Vec::new(),
-                        enc_terms,
-                        struct_terms,
+                        scheme_data,
                     });
                 }
 
@@ -380,12 +294,42 @@ impl BackendBridge {
                 } else {
                     None
                 };
+
+                let (enc_plugin, server_index) = if protocol == PrivacyProtocol::EncryptedSearch {
+                    let scheme: String = payload
+                        .get_item("encrypted_search_scheme")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.extract::<String>().ok())
+                        .unwrap_or_else(|| "sse".to_string());
+
+                    let plugin_mod = py.import("securerag.scheme_plugin")?;
+                    let plugin = plugin_mod
+                        .getattr("EncryptedSchemePlugin")?
+                        .call_method1("get", (&scheme,))?;
+
+                    let py_rows = PyList::empty(py);
+                    for row in &rows {
+                        let d = PyDict::new(py);
+                        d.set_item("doc_id", &row.doc_id)?;
+                        d.set_item("text", &row.text)?;
+                        d.set_item("scheme_data", row.scheme_data.bind(py))?;
+                        py_rows.append(d)?;
+                    }
+                    let srv_idx = plugin.call_method1("build_server_index", (py_rows,))?;
+                    (Some(plugin.into()), Some(srv_idx.into()))
+                } else {
+                    (None, None)
+                };
+
                 guard.insert(
                     index_id.clone(),
                     IndexState {
                         protocol,
                         rows,
                         dp_budget,
+                        enc_plugin,
+                        server_index,
                     },
                 );
 
@@ -464,84 +408,6 @@ impl BackendBridge {
                     let idx = ((seed as usize).wrapping_add(i * 17)) % rows.len();
                     let text = rows[idx].text.clone();
                     out.append(text)?;
-                }
-                Ok(out.into_any().unbind())
-            }
-            "sse_search" => {
-                let index_id: String = required_item(&payload, "index_id")?.extract()?;
-                let top_k: usize = required_item(&payload, "top_k")?.extract()?;
-                let enc_terms: Vec<String> = required_item(&payload, "enc_terms")?.extract()?;
-                let qset: std::collections::HashSet<&str> =
-                    enc_terms.iter().map(|s| s.as_str()).collect();
-
-                let guard = INDEXES
-                    .lock()
-                    .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let rows = &guard
-                    .get(&index_id)
-                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?
-                    .rows;
-
-                let mut scored: Vec<(f64, String, String)> = rows
-                    .iter()
-                    .map(|r| {
-                        let tset: std::collections::HashSet<&str> =
-                            r.enc_terms.iter().map(|s| s.as_str()).collect();
-                        let inter = qset.intersection(&tset).count() as f64;
-                        let union = qset.union(&tset).count() as f64;
-                        let score = if union == 0.0 { 0.0 } else { inter / union };
-                        (score, r.doc_id.clone(), r.text.clone())
-                    })
-                    .collect();
-                scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-                let out = PyList::empty(py);
-                for (score, doc_id, text) in scored.into_iter().take(top_k) {
-                    let row = PyDict::new(py);
-                    row.set_item("doc_id", doc_id)?;
-                    row.set_item("text", text)?;
-                    row.set_item("metadata", PyDict::new(py))?;
-                    row.set_item("score", score)?;
-                    out.append(row)?;
-                }
-                Ok(out.into_any().unbind())
-            }
-            "structured_search" => {
-                let index_id: String = required_item(&payload, "index_id")?.extract()?;
-                let top_k: usize = required_item(&payload, "top_k")?.extract()?;
-                let struct_terms: Vec<String> = required_item(&payload, "struct_terms")?.extract()?;
-                let qset: std::collections::HashSet<&str> =
-                    struct_terms.iter().map(|s| s.as_str()).collect();
-
-                let guard = INDEXES
-                    .lock()
-                    .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let rows = &guard
-                    .get(&index_id)
-                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?
-                    .rows;
-
-                let mut scored: Vec<(f64, String, String)> = rows
-                    .iter()
-                    .map(|r| {
-                        let tset: std::collections::HashSet<&str> =
-                            r.struct_terms.iter().map(|s| s.as_str()).collect();
-                        let inter = qset.intersection(&tset).count() as f64;
-                        let union = qset.union(&tset).count() as f64;
-                        let score = if union == 0.0 { 0.0 } else { inter / union };
-                        (score, r.doc_id.clone(), r.text.clone())
-                    })
-                    .collect();
-                scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-                let out = PyList::empty(py);
-                for (score, doc_id, text) in scored.into_iter().take(top_k) {
-                    let row = PyDict::new(py);
-                    row.set_item("doc_id", doc_id)?;
-                    row.set_item("text", text)?;
-                    row.set_item("metadata", PyDict::new(py))?;
-                    row.set_item("score", score)?;
-                    out.append(row)?;
                 }
                 Ok(out.into_any().unbind())
             }

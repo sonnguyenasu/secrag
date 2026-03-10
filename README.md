@@ -2,6 +2,16 @@
 
 SecureRAG is a protocol-driven retrieval augmented generation framework focused on privacy-aware retrieval.
 
+## New in this version
+
+- Encrypted search is now plugin-based via `EncryptedSchemePlugin`.
+- Built-in schemes (`sse`, `structured`) are registered automatically at import time.
+- Scheme-specific `if/elif` dispatch in framework core was removed.
+- Backend encrypted search surface is unified to one operation: `encrypted_search`.
+- gRPC/proto surface now uses `EncryptedSearch` instead of legacy SSE-specific RPCs.
+- `CorpusBuilder.build_local()` was added for large-corpus local preprocessing benchmarks.
+- Contract tests now enforce `refactor.md` behavior when it conflicts with legacy API design text.
+
 This repository provides:
 
 - A Python orchestration layer for corpus construction, retrieval routing, budget accounting, and LLM interaction.
@@ -37,8 +47,9 @@ Execution flow:
   - `BASELINE`
   - `OBFUSCATION`
   - `DIFF_PRIVACY`
-- Contract-complete retrievers with explicit capability errors:
+- Encrypted search retriever implemented via plugin abstraction:
   - `ENCRYPTED_SEARCH`
+- Contract-complete retriever with explicit capability error:
   - `PIR`
 - `SecureRAGAgent` multi-round orchestration
 - Typed corpora:
@@ -75,6 +86,29 @@ python examples/quickstart.py
 
 `examples/quickstart.py` is the primary end-to-end reference and supports env-based backend/provider switching.
 
+### Encrypted search quick usage
+
+```python
+from securerag import PrivacyConfig, PrivacyProtocol
+from securerag.corpus import CorpusBuilder
+
+builder = (
+  CorpusBuilder(PrivacyProtocol.ENCRYPTED_SEARCH)
+  .with_encrypted_search_scheme("sse")
+  .add_documents(docs)
+)
+
+corpus = builder.build()  # or builder.build_local(workers=4)
+
+cfg = PrivacyConfig(
+  protocol=PrivacyProtocol.ENCRYPTED_SEARCH,
+  encrypted_search_scheme="sse",
+  top_k=5,
+)
+```
+
+To register a custom research scheme, implement `EncryptedSchemePlugin` and call `EncryptedSchemePlugin.register("my_scheme", instance)` before corpus build.
+
 ## Rust backend (PyO3)
 
 Build and install the Rust extension module:
@@ -85,6 +119,17 @@ pip install maturin
 cd securerag-rs
 maturin develop --features python-bridge
 cd ..
+```
+
+If your shell has Conda auto-activation and `maturin develop` picks the wrong Python/pip, run with venv-first path and explicit pip path:
+
+```bash
+unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_EXE CONDA_PYTHON_EXE
+export PATH="$(pwd)/.venv/bin:$PATH"
+python -m maturin develop \
+  --manifest-path securerag-rs/Cargo.toml \
+  --features python-bridge \
+  --pip-path "$(pwd)/.venv/bin/pip"
 ```
 
 Then set backend in config:
@@ -117,7 +162,7 @@ config = PrivacyConfig(
 )
 ```
 
-The gRPC surface is strict and typed. The `SecureRetrieval` service exposes explicit methods for each operation (`Chunk`, `BuildIndex`, `BatchRetrieve`, `SseEncryptTerms`, `SseSearch`, etc.) rather than a generic string-dispatched RPC envelope.
+The gRPC surface is strict and typed. The `SecureRetrieval` service exposes explicit methods (`Chunk`, `BuildIndex`, `BatchRetrieve`, `EncryptedSearch`, etc.) rather than a generic string-dispatched RPC envelope.
 
 Proto file:
 
@@ -160,3 +205,13 @@ If remote model calls are disabled or unavailable, deterministic local fallback 
 - This codebase is intended for research prototyping and API validation.
 - `PIR` remains contract-complete but intentionally unimplemented as a retrieval algorithm in this repository.
 - For tests that use default HTTP backend values, start `securerag.sim_server` (or use the provided test command patterns that launch it temporarily).
+
+## Refactor contract test
+
+Run the refactor contract test suite:
+
+```bash
+python -m pytest -q tests/test_refactor_contract.py
+```
+
+This suite verifies that runtime behavior follows `refactor.md` and treats conflicting legacy expectations in `securerag-api-design.md` as non-authoritative.

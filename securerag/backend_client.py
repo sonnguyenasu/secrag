@@ -20,35 +20,6 @@ class Backend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def sse_generate_key(self) -> str:
-        raise NotImplementedError
-
-    @abstractmethod
-    def sse_encrypt_terms(self, text: str, key: str) -> list[str]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def sse_encrypt_structured_terms(
-        self,
-        text: str,
-        key: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[str]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def sse_prepare_chunks(
-        self,
-        chunks: list[dict],
-        key: str,
-        scheme: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[dict]:
-        raise NotImplementedError
-
-    @abstractmethod
     def build_index(
         self,
         protocol: str,
@@ -56,6 +27,7 @@ class Backend(ABC):
         *,
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
+        encrypted_search_scheme: str = "",
     ) -> dict:
         raise NotImplementedError
 
@@ -83,11 +55,7 @@ class Backend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def sse_search(self, index_id: str, enc_terms: list[str], top_k: int) -> list[dict]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def structured_search(self, index_id: str, struct_terms: list[str], top_k: int) -> list[dict]:
+    def encrypted_search(self, index_id: str, encrypted_query: dict[str, Any], top_k: int) -> list[dict]:
         raise NotImplementedError
 
 
@@ -113,42 +81,6 @@ class RemoteBackend(Backend):
     def sanitize(self, chunks: list[dict]) -> list[dict]:
         return self._call("sanitize", {"chunks": chunks})
 
-    def sse_generate_key(self) -> str:
-        return self._call("sse_generate_key", {})
-
-    def sse_encrypt_terms(self, text: str, key: str) -> list[str]:
-        return self._call("sse_encrypt_terms", {"text": text, "key": key})
-
-    def sse_encrypt_structured_terms(
-        self,
-        text: str,
-        key: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[str]:
-        return self._call(
-            "sse_encrypt_structured_terms",
-            {"text": text, "key": key, "use_bigrams": use_bigrams},
-        )
-
-    def sse_prepare_chunks(
-        self,
-        chunks: list[dict],
-        key: str,
-        scheme: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[dict]:
-        return self._call(
-            "sse_prepare_chunks",
-            {
-                "chunks": chunks,
-                "key": key,
-                "scheme": scheme,
-                "use_bigrams": use_bigrams,
-            },
-        )
-
     def build_index(
         self,
         protocol: str,
@@ -156,6 +88,7 @@ class RemoteBackend(Backend):
         *,
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
+        encrypted_search_scheme: str = "",
     ) -> dict:
         return self._call(
             "build_index",
@@ -164,6 +97,7 @@ class RemoteBackend(Backend):
                 "chunks": chunks,
                 "epsilon": epsilon,
                 "delta": delta,
+                "encrypted_search_scheme": encrypted_search_scheme,
             },
         )
 
@@ -198,22 +132,12 @@ class RemoteBackend(Backend):
             },
         )
 
-    def sse_search(self, index_id: str, enc_terms: list[str], top_k: int) -> list[dict]:
+    def encrypted_search(self, index_id: str, encrypted_query: dict[str, Any], top_k: int) -> list[dict]:
         return self._call(
-            "sse_search",
+            "encrypted_search",
             {
                 "index_id": index_id,
-                "enc_terms": enc_terms,
-                "top_k": top_k,
-            },
-        )
-
-    def structured_search(self, index_id: str, struct_terms: list[str], top_k: int) -> list[dict]:
-        return self._call(
-            "structured_search",
-            {
-                "index_id": index_id,
-                "struct_terms": struct_terms,
+                "encrypted_query": encrypted_query,
                 "top_k": top_k,
             },
         )
@@ -265,48 +189,6 @@ class GrpcBackend(Backend):
         resp = self._invoke("Sanitize", req)
         return [self._struct_to_dict(c) for c in resp.chunks]
 
-    def sse_generate_key(self) -> str:
-        resp = self._invoke("SseGenerateKey", self._grpc_pb2.SseGenerateKeyRequest())
-        return str(resp.key)
-
-    def sse_encrypt_terms(self, text: str, key: str) -> list[str]:
-        resp = self._invoke("SseEncryptTerms", self._grpc_pb2.SseEncryptTermsRequest(text=text, key=key))
-        return [str(x) for x in resp.terms]
-
-    def sse_encrypt_structured_terms(
-        self,
-        text: str,
-        key: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[str]:
-        resp = self._invoke(
-            "SseEncryptStructuredTerms",
-            self._grpc_pb2.SseEncryptStructuredTermsRequest(
-                text=text,
-                key=key,
-                use_bigrams=use_bigrams,
-            ),
-        )
-        return [str(x) for x in resp.terms]
-
-    def sse_prepare_chunks(
-        self,
-        chunks: list[dict],
-        key: str,
-        scheme: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[dict]:
-        req = self._grpc_pb2.SsePrepareChunksRequest(
-            chunks=[self._dict_to_struct(c) for c in chunks],
-            key=key,
-            scheme=scheme,
-            use_bigrams=use_bigrams,
-        )
-        resp = self._invoke("SsePrepareChunks", req)
-        return [self._struct_to_dict(c) for c in resp.chunks]
-
     def build_index(
         self,
         protocol: str,
@@ -314,12 +196,14 @@ class GrpcBackend(Backend):
         *,
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
+        encrypted_search_scheme: str = "",
     ) -> dict:
         req = self._grpc_pb2.BuildIndexRequest(
             protocol=protocol,
             chunks=[self._dict_to_struct(c) for c in chunks],
             epsilon=epsilon,
             delta=delta,
+            encrypted_search_scheme=encrypted_search_scheme,
         )
         resp = self._invoke("BuildIndex", req)
         return {"index_id": str(resp.index_id), "doc_count": int(resp.doc_count)}
@@ -357,14 +241,13 @@ class GrpcBackend(Backend):
         resp = self._invoke("RetrieveByEmbedding", req)
         return [self._struct_to_dict(r) for r in resp.rows]
 
-    def sse_search(self, index_id: str, enc_terms: list[str], top_k: int) -> list[dict]:
-        req = self._grpc_pb2.SseSearchRequest(index_id=index_id, enc_terms=enc_terms, top_k=top_k)
-        resp = self._invoke("SseSearch", req)
-        return [self._struct_to_dict(r) for r in resp.rows]
-
-    def structured_search(self, index_id: str, struct_terms: list[str], top_k: int) -> list[dict]:
-        req = self._grpc_pb2.StructuredSearchRequest(index_id=index_id, struct_terms=struct_terms, top_k=top_k)
-        resp = self._invoke("StructuredSearch", req)
+    def encrypted_search(self, index_id: str, encrypted_query: dict[str, Any], top_k: int) -> list[dict]:
+        req = self._grpc_pb2.EncryptedSearchRequest(
+            index_id=index_id,
+            encrypted_query=self._dict_to_struct(encrypted_query),
+            top_k=top_k,
+        )
+        resp = self._invoke("EncryptedSearch", req)
         return [self._struct_to_dict(r) for r in resp.rows]
 
 

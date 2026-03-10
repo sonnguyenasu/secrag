@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import re
 
 from securerag.backend_client import create_backend
 from securerag.models import CorpusMeta, RawDocument
 from securerag.protocol import PrivacyProtocol
+from securerag.scheme_plugin import EncryptedSchemePlugin
 
 
 class SecureCorpus(ABC):
@@ -44,6 +47,10 @@ class SSECorpus(SecureCorpus):
     @property
     def scheme(self) -> str:
         return str(self.extras.get("encrypted_search_scheme", "sse"))
+
+    @property
+    def plugin(self) -> EncryptedSchemePlugin:
+        return self.extras["plugin"]
 
     def save(self, path: str) -> None:
         Path(path).write_text(
@@ -129,30 +136,114 @@ class CorpusBuilder:
 
         extras: dict = {}
         if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
-            scheme = self._encrypted_search_scheme
-            enc_key = self._backend.sse_generate_key()
-            chunks = self._backend.sse_prepare_chunks(
-                chunks=chunks,
-                key=enc_key,
-                scheme=scheme,
-                use_bigrams=self._structured_use_bigrams,
-            )
-            if scheme in {"structured", "structured_encryption"}:
-                scheme = "structured"
-            elif scheme != "sse":
-                raise ValueError(
-                    f"Unknown encrypted search scheme for builder: {scheme}. "
-                    "Use 'sse' or 'structured'."
-                )
-
+            plugin = EncryptedSchemePlugin.get(self._encrypted_search_scheme)
+            enc_key = plugin.generate_key()
+            for chunk in chunks:
+                chunk["scheme_data"] = plugin.prepare_chunk(chunk["text"], enc_key)
             extras["enc_key"] = enc_key
-            extras["encrypted_search_scheme"] = scheme
+            extras["encrypted_search_scheme"] = self._encrypted_search_scheme
+            extras["plugin"] = plugin
 
         index_payload = self._backend.build_index(
             self._protocol.wire_name,
             chunks,
             epsilon=self._epsilon,
             delta=self._delta,
+            encrypted_search_scheme=self._encrypted_search_scheme
+            if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
+            else "",
+        )
+        meta = CorpusMeta(
+            doc_count=index_payload["doc_count"],
+            chunk_size=self._chunk_size,
+            overlap=self._overlap,
+            protocol=self._protocol.name,
+        )
+        if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
+            return SSECorpus(
+                protocol=self._protocol,
+                meta=meta,
+                index_id=index_payload["index_id"],
+                extras=extras,
+            )
+        if self._protocol is PrivacyProtocol.DIFF_PRIVACY:
+            return EmbeddingCorpus(
+                protocol=self._protocol,
+                meta=meta,
+                index_id=index_payload["index_id"],
+                extras=extras,
+            )
+        if self._protocol is PrivacyProtocol.PIR:
+            return PIRDatabase(
+                protocol=self._protocol,
+                meta=meta,
+                index_id=index_payload["index_id"],
+                extras=extras,
+            )
+        return GenericCorpus(
+            protocol=self._protocol,
+            meta=meta,
+            index_id=index_payload["index_id"],
+            extras=extras,
+        )
+
+    @staticmethod
+    def _local_chunk(docs: list[RawDocument], chunk_size: int, overlap: int) -> list[dict]:
+        step = max(1, chunk_size - overlap)
+        chunks: list[dict] = []
+        for d in docs:
+            if len(d.text) <= chunk_size:
+                chunks.append({"doc_id": d.doc_id, "text": d.text, "metadata": d.metadata})
+                continue
+            for i in range(0, len(d.text), step):
+                snippet = d.text[i : i + chunk_size]
+                if not snippet:
+                    continue
+                if i > 0 and len(snippet) < max(24, chunk_size // 3):
+                    continue
+                chunks.append({"doc_id": d.doc_id, "text": snippet, "metadata": d.metadata})
+        return chunks
+
+    @staticmethod
+    def _local_sanitize(chunks: list[dict]) -> list[dict]:
+        bad = ["ignore previous instructions", "system prompt", "developer instructions"]
+        out = []
+        for c in chunks:
+            text = c["text"]
+            for token in bad:
+                text = re.sub(re.escape(token), "", text, flags=re.IGNORECASE)
+            out.append({**c, "text": text})
+        return out
+
+    def build_local(self, *, workers: int = 4) -> SecureCorpus:
+        chunks = self._local_chunk(self._docs, self._chunk_size, self._overlap)
+        if self._sanitize:
+            chunks = self._local_sanitize(chunks)
+
+        extras: dict = {}
+        if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
+            plugin = EncryptedSchemePlugin.get(self._encrypted_search_scheme)
+            enc_key = plugin.generate_key()
+
+            def _prep(chunk: dict) -> dict:
+                chunk["scheme_data"] = plugin.prepare_chunk(chunk["text"], enc_key)
+                return chunk
+
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                chunks = list(ex.map(_prep, chunks))
+
+            extras["enc_key"] = enc_key
+            extras["encrypted_search_scheme"] = self._encrypted_search_scheme
+            extras["plugin"] = plugin
+
+        index_payload = self._backend.build_index(
+            self._protocol.wire_name,
+            chunks,
+            epsilon=self._epsilon,
+            delta=self._delta,
+            encrypted_search_scheme=self._encrypted_search_scheme
+            if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
+            else "",
         )
         meta = CorpusMeta(
             doc_count=index_payload["doc_count"],

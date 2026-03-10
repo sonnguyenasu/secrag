@@ -12,12 +12,7 @@ service SecureRetrieval {
   rpc BatchRetrieve (BatchRetrieveRequest) returns (BatchRetrieveResponse);
   rpc EmbedWithNoise (EmbedWithNoiseRequest) returns (EmbedWithNoiseResponse);
   rpc RetrieveByEmbedding (RetrieveByEmbeddingRequest) returns (RetrieveByEmbeddingResponse);
-  rpc SseGenerateKey (SseGenerateKeyRequest) returns (SseGenerateKeyResponse);
-  rpc SseEncryptTerms (SseEncryptTermsRequest) returns (SseEncryptTermsResponse);
-  rpc SseEncryptStructuredTerms (SseEncryptStructuredTermsRequest) returns (SseEncryptStructuredTermsResponse);
-  rpc SsePrepareChunks (SsePrepareChunksRequest) returns (SsePrepareChunksResponse);
-  rpc SseSearch (SseSearchRequest) returns (SseSearchResponse);
-  rpc StructuredSearch (StructuredSearchRequest) returns (StructuredSearchResponse);
+  rpc EncryptedSearch (EncryptedSearchRequest) returns (EncryptedSearchResponse);
 }
 
 message ChunkRequest {
@@ -43,6 +38,7 @@ message BuildIndexRequest {
   repeated google.protobuf.Struct chunks = 2;
   double epsilon = 3;
   double delta = 4;
+  string encrypted_search_scheme = 5;
 }
 
 message BuildIndexResponse {
@@ -91,59 +87,13 @@ message RetrieveByEmbeddingResponse {
   repeated google.protobuf.Struct rows = 1;
 }
 
-message SseGenerateKeyRequest {}
-
-message SseGenerateKeyResponse {
-  string key = 1;
-}
-
-message SseEncryptTermsRequest {
-  string text = 1;
-  string key = 2;
-}
-
-message SseEncryptTermsResponse {
-  repeated string terms = 1;
-}
-
-message SseEncryptStructuredTermsRequest {
-  string text = 1;
-  string key = 2;
-  bool use_bigrams = 3;
-}
-
-message SseEncryptStructuredTermsResponse {
-  repeated string terms = 1;
-}
-
-message SsePrepareChunksRequest {
-  repeated google.protobuf.Struct chunks = 1;
-  string key = 2;
-  string scheme = 3;
-  bool use_bigrams = 4;
-}
-
-message SsePrepareChunksResponse {
-  repeated google.protobuf.Struct chunks = 1;
-}
-
-message SseSearchRequest {
+message EncryptedSearchRequest {
   string index_id = 1;
-  repeated string enc_terms = 2;
+  google.protobuf.Struct encrypted_query = 2;
   int32 top_k = 3;
 }
 
-message SseSearchResponse {
-  repeated google.protobuf.Struct rows = 1;
-}
-
-message StructuredSearchRequest {
-  string index_id = 1;
-  repeated string struct_terms = 2;
-  int32 top_k = 3;
-}
-
-message StructuredSearchResponse {
+message EncryptedSearchResponse {
   repeated google.protobuf.Struct rows = 1;
 }
 

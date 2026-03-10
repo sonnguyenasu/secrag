@@ -4,7 +4,6 @@ import hashlib
 import math
 import random
 import re
-import secrets
 import uuid
 from typing import Any
 
@@ -58,7 +57,7 @@ def _cos(a: list[float], b: list[float]) -> float:
 def _retrieve_lexical(index: dict[str, Any], query: str, top_k: int) -> list[dict]:
     q_tokens = set(_tokenize(query))
     scored = []
-    for row in index["chunks"]:
+    for row in index["rows"]:
         t_tokens = set(_tokenize(row["text"]))
         inter = len(q_tokens & t_tokens)
         union = len(q_tokens | t_tokens) or 1
@@ -79,7 +78,7 @@ def _retrieve_embedding(index: dict[str, Any], emb: list[float], top_k: int, que
     # Blend lexical and embedding signals to improve relevance in the MVP simulation.
     q_tokens = set(_tokenize(query)) if query else set()
     scored = []
-    for row in index["chunks"]:
+    for row in index["rows"]:
         emb_score = _cos(emb, row["embedding"])
         if q_tokens:
             t_tokens = set(_tokenize(row["text"]))
@@ -99,24 +98,6 @@ def _retrieve_embedding(index: dict[str, Any], emb: list[float], top_k: int, que
         )
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[:top_k]
-
-
-def _encrypt_token(token: str, key: str) -> str:
-    digest = hashlib.sha256(f"{key}:{token}".encode("utf-8")).hexdigest()
-    return digest[:24]
-
-
-def _encrypt_terms(text: str, key: str) -> list[str]:
-    return [_encrypt_token(t, key) for t in _tokenize(text)]
-
-
-def _encrypt_structured_terms(text: str, key: str, use_bigrams: bool = True) -> list[str]:
-    tokens = _tokenize(text)
-    out = [_encrypt_token(f"tok:{t}", key) for t in tokens]
-    if use_bigrams and len(tokens) >= 2:
-        for i in range(len(tokens) - 1):
-            out.append(_encrypt_token(f"bi:{tokens[i]}_{tokens[i + 1]}", key))
-    return out
 
 
 @app.get("/health")
@@ -174,115 +155,70 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
                 out.append({**c, "text": text})
             return {"ok": True, "data": out}
 
-        if op == "sse_generate_key":
-            return {"ok": True, "data": secrets.token_hex(16)}
-
-        if op == "sse_encrypt_terms":
-            text = p["text"]
-            key = p["key"]
-            return {"ok": True, "data": _encrypt_terms(text, key)}
-
-        if op == "sse_encrypt_structured_terms":
-            text = p["text"]
-            key = p["key"]
-            use_bigrams = bool(p.get("use_bigrams", True))
-            return {
-                "ok": True,
-                "data": _encrypt_structured_terms(text, key, use_bigrams=use_bigrams),
-            }
-
-        if op == "sse_prepare_chunks":
-            chunks = p["chunks"]
-            key = p["key"]
-            scheme = str(p.get("scheme", "sse")).lower()
-            use_bigrams = bool(p.get("use_bigrams", True))
-            out = []
-            for c in chunks:
-                row = {**c}
-                text = row.get("text", "")
-                if scheme == "sse":
-                    row["enc_terms"] = _encrypt_terms(text, key)
-                elif scheme in {"structured", "structured_encryption"}:
-                    row["struct_terms"] = _encrypt_structured_terms(
-                        text,
-                        key,
-                        use_bigrams=use_bigrams,
-                    )
-                else:
-                    raise ValueError(
-                        f"Unknown encrypted search scheme for backend: {scheme}. "
-                        "Use 'sse' or 'structured'."
-                    )
-                out.append(row)
-            return {"ok": True, "data": out}
-
         if op == "build_index":
             protocol = p["protocol"]
             epsilon = float(p.get("epsilon", 1_000_000.0))
             delta = float(p.get("delta", 1e-5))
             chunks = p["chunks"]
+            scheme = p.get("encrypted_search_scheme")
+
+            rows = []
             for c in chunks:
-                c["embedding"] = _embed(c["text"])
-                c["enc_terms"] = c.get("enc_terms", [])
-                c["struct_terms"] = c.get("struct_terms", [])
+                row = {
+                    "doc_id": c["doc_id"],
+                    "text": c["text"],
+                    "metadata": c.get("metadata", {}),
+                    "embedding": _embed(c["text"]),
+                    "scheme_data": c.get("scheme_data", {}),
+                }
+                rows.append(row)
+
+            if scheme:
+                try:
+                    from securerag.scheme_plugin import EncryptedSchemePlugin
+
+                    plugin = EncryptedSchemePlugin.get(scheme)
+                    server_index = plugin.build_server_index(rows)
+                except KeyError:
+                    server_index = rows
+            else:
+                server_index = rows
+
             index_id = str(uuid.uuid4())
             _INDEXES[index_id] = {
                 "protocol": protocol,
-                "chunks": chunks,
+                "server_index": server_index,
+                "rows": rows,
+                "scheme": scheme,
                 "epsilon": epsilon,
                 "delta": delta,
+                "rdp_acc": [0.0] * 5,
                 "spent": 0.0,
             }
-            return {"ok": True, "data": {"index_id": index_id, "doc_count": len(chunks)}}
+            return {"ok": True, "data": {"index_id": index_id, "doc_count": len(rows)}}
 
-        if op == "sse_search":
+        if op == "encrypted_search":
             index = _INDEXES[p["index_id"]]
-            q_terms = set(p["enc_terms"])
+            encrypted_query = p["encrypted_query"]
             top_k = int(p["top_k"])
-            scored = []
-            for row in index["chunks"]:
-                t_terms = set(row.get("enc_terms", []))
-                inter = len(q_terms & t_terms)
-                union = len(q_terms | t_terms) or 1
-                score = inter / union
-                scored.append(
-                    {
-                        "doc_id": row["doc_id"],
-                        "text": row["text"],
-                        "metadata": row.get("metadata", {}),
-                        "score": score,
-                    }
-                )
-            scored.sort(key=lambda x: x["score"], reverse=True)
-            return {"ok": True, "data": scored[:top_k]}
+            scheme = index.get("scheme")
 
-        if op == "structured_search":
-            index = _INDEXES[p["index_id"]]
-            q_terms = set(p["struct_terms"])
-            top_k = int(p["top_k"])
-            scored = []
-            for row in index["chunks"]:
-                t_terms = set(row.get("struct_terms", []))
-                inter = len(q_terms & t_terms)
-                union = len(q_terms | t_terms) or 1
-                score = inter / union
-                scored.append(
-                    {
-                        "doc_id": row["doc_id"],
-                        "text": row["text"],
-                        "metadata": row.get("metadata", {}),
-                        "score": score,
-                    }
-                )
-            scored.sort(key=lambda x: x["score"], reverse=True)
-            return {"ok": True, "data": scored[:top_k]}
+            if scheme:
+                from securerag.scheme_plugin import EncryptedSchemePlugin
+
+                plugin = EncryptedSchemePlugin.get(scheme)
+                results = plugin.search(index["server_index"], encrypted_query, top_k)
+            else:
+                return {"ok": False, "error": "Index was not built with an encrypted scheme"}
+
+            return {"ok": True, "data": results}
 
         if op == "generate_decoys":
             index = _INDEXES[p["index_id"]]
             k = int(p["k"])
             query = p["query"]
             rnd = random.Random(hash(query) & 0xFFFF)
-            texts = [c["text"] for c in index["chunks"]]
+            texts = [c["text"] for c in index["rows"]]
             if not texts:
                 return {"ok": True, "data": [query] * k}
             return {"ok": True, "data": [texts[rnd.randrange(len(texts))][:80] for _ in range(k)]}

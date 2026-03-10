@@ -12,9 +12,9 @@ from securerag import PrivacyConfig, PrivacyProtocol, SecureRAGAgent
 from securerag.backend_client import create_backend
 from securerag.budget import BudgetManager
 from securerag.corpus import CorpusBuilder
-from securerag.errors import UnsupportedCapabilityError
 from securerag.llm import HuggingFaceLLM, OllamaLLM
 from securerag.models import Document, RawDocument
+from securerag.scheme_plugin import EncryptedSchemePlugin
 
 
 def test_budget_snapshot_shape():
@@ -245,7 +245,7 @@ def test_top1_retrieval_parity_http_vs_rust(protocol: PrivacyProtocol, encrypted
             proc.kill()
 
 
-def test_sse_crypto_ops_parity_http_vs_rust():
+def test_encrypted_search_parity_http_vs_rust():
     pytest.importorskip("securerag_rs")
 
     port = _free_port()
@@ -273,44 +273,32 @@ def test_sse_crypto_ops_parity_http_vs_rust():
 
         text = "Q3 risks include vendor dependencies and delayed remediation plans."
         key = "0123456789abcdef0123456789abcdef"
-        chunks = [{"doc_id": "q3", "text": text, "metadata": {"source": "unit"}}]
+        plugin = EncryptedSchemePlugin.get("sse")
+        chunks = [
+            {
+                "doc_id": "q3",
+                "text": text,
+                "metadata": {"source": "unit"},
+                "scheme_data": plugin.prepare_chunk(text, key),
+            }
+        ]
 
-        generated_key = rust_backend.sse_generate_key()
-        assert len(generated_key) == 32
-
-        assert http_backend.sse_encrypt_terms(text, key) == rust_backend.sse_encrypt_terms(text, key)
-        assert http_backend.sse_encrypt_structured_terms(
-            text,
-            key,
-            use_bigrams=True,
-        ) == rust_backend.sse_encrypt_structured_terms(
-            text,
-            key,
-            use_bigrams=True,
+        http_idx = http_backend.build_index(
+            "EncryptedSearch",
+            chunks,
+            encrypted_search_scheme="sse",
+        )
+        rust_idx = rust_backend.build_index(
+            "EncryptedSearch",
+            chunks,
+            encrypted_search_scheme="sse",
         )
 
-        assert http_backend.sse_prepare_chunks(
-            chunks,
-            key,
-            "sse",
-            use_bigrams=True,
-        ) == rust_backend.sse_prepare_chunks(
-            chunks,
-            key,
-            "sse",
-            use_bigrams=True,
-        )
-        assert http_backend.sse_prepare_chunks(
-            chunks,
-            key,
-            "structured",
-            use_bigrams=True,
-        ) == rust_backend.sse_prepare_chunks(
-            chunks,
-            key,
-            "structured",
-            use_bigrams=True,
-        )
+        enc_query = plugin.encrypt_query("vendor dependencies", key)
+        http_rows = http_backend.encrypted_search(http_idx["index_id"], enc_query, 5)
+        rust_rows = rust_backend.encrypted_search(rust_idx["index_id"], enc_query, 5)
+
+        assert [r["doc_id"] for r in rust_rows] == [r["doc_id"] for r in http_rows]
     finally:
         proc.terminate()
         try:
@@ -443,16 +431,13 @@ def test_top1_retrieval_parity_http_vs_grpc_baseline():
 
 def test_encrypted_search_unsupported_scheme_raises():
     docs = [RawDocument(doc_id="q3", text="Q3 risk report"), RawDocument(doc_id="p", text="security policy")]
-    corpus = CorpusBuilder(PrivacyProtocol.ENCRYPTED_SEARCH).add_documents(docs).build()
-    cfg = PrivacyConfig(
-        protocol=PrivacyProtocol.ENCRYPTED_SEARCH,
-        encrypted_search_scheme="unknown_scheme",
-        top_k=2,
-    )
-    agent = SecureRAGAgent.from_config(cfg, corpus=corpus, llm=OllamaLLM())
-
-    with pytest.raises(UnsupportedCapabilityError):
-        agent.retriever.retrieve("q3 risk", 0)
+    with pytest.raises(KeyError):
+        (
+            CorpusBuilder(PrivacyProtocol.ENCRYPTED_SEARCH)
+            .with_encrypted_search_scheme("unknown_scheme")
+            .add_documents(docs)
+            .build()
+        )
 
 
 def test_cot_planner_creates_followup_subquery():

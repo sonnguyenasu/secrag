@@ -2,12 +2,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use once_cell::sync::Lazy;
-use prost_types::{value, ListValue, Struct, Value};
+use prost_types::{value, Struct, Value};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use rand::RngCore;
 use rand_distr::{Distribution, Normal};
+use securerag_rs::builtin_schemes::{RustSSEScheme, RustStructuredScheme};
 use securerag_rs::dp::RDPAccountant;
+use securerag_rs::encrypted_scheme::{EncryptedScheme, SchemeIndex, SchemeRow};
 use sha2::{Digest, Sha256};
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -20,10 +21,7 @@ use pb::{
     BatchRetrieveRequest, BatchRetrieveResponse, BuildIndexRequest, BuildIndexResponse, ChunkRequest,
     ChunkResponse, EmbedWithNoiseRequest, EmbedWithNoiseResponse, GenerateDecoysRequest,
     GenerateDecoysResponse, RetrievalList, RetrieveByEmbeddingRequest, RetrieveByEmbeddingResponse,
-    SanitizeRequest, SanitizeResponse, SseEncryptStructuredTermsRequest,
-    SseEncryptStructuredTermsResponse, SseEncryptTermsRequest, SseEncryptTermsResponse,
-    SseGenerateKeyRequest, SseGenerateKeyResponse, SsePrepareChunksRequest, SsePrepareChunksResponse,
-    SseSearchRequest, SseSearchResponse, StructuredSearchRequest, StructuredSearchResponse,
+    EncryptedSearchRequest, EncryptedSearchResponse, SanitizeRequest, SanitizeResponse,
 };
 
 #[derive(Clone)]
@@ -32,14 +30,14 @@ struct Row {
     text: String,
     metadata: Struct,
     embedding: Vec<f64>,
-    enc_terms: Vec<String>,
-    struct_terms: Vec<String>,
+    scheme_data: HashMap<String, serde_json::Value>,
 }
 
 struct Index {
     _protocol: String,
     dp_budget: Option<RDPAccountant>,
     chunks: Vec<Row>,
+    scheme_index: Option<Box<dyn SchemeIndex>>,
 }
 
 const LEXICAL_WEIGHT: f64 = 0.65;
@@ -47,6 +45,16 @@ const EMBEDDING_WEIGHT: f64 = 0.35;
 
 static INDEXES: Lazy<Arc<Mutex<HashMap<String, Index>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+static SCHEME_REGISTRY: Lazy<HashMap<&'static str, Box<dyn EncryptedScheme>>> = Lazy::new(|| {
+    let mut m: HashMap<&str, Box<dyn EncryptedScheme>> = HashMap::new();
+    m.insert("sse", Box::new(RustSSEScheme));
+    m.insert(
+        "structured",
+        Box::new(RustStructuredScheme { use_bigrams: true }),
+    );
+    m
+});
 
 fn str_value(s: &str) -> Value {
     Value {
@@ -57,12 +65,6 @@ fn str_value(s: &str) -> Value {
 fn num_value(n: f64) -> Value {
     Value {
         kind: Some(value::Kind::NumberValue(n)),
-    }
-}
-
-fn list_value(values: Vec<Value>) -> Value {
-    Value {
-        kind: Some(value::Kind::ListValue(ListValue { values })),
     }
 }
 
@@ -79,19 +81,29 @@ fn get_string(s: &Struct, key: &str) -> Option<String> {
     })
 }
 
-fn get_string_list(s: &Struct, key: &str) -> Option<Vec<String>> {
-    s.fields.get(key).and_then(|v| match &v.kind {
-        Some(value::Kind::ListValue(list)) => {
-            let mut out = Vec::new();
-            for item in &list.values {
-                if let Some(value::Kind::StringValue(x)) = &item.kind {
-                    out.push(x.clone());
-                }
-            }
-            Some(out)
+fn prost_value_to_json(v: &Value) -> serde_json::Value {
+    match &v.kind {
+        Some(value::Kind::NullValue(_)) | None => serde_json::Value::Null,
+        Some(value::Kind::NumberValue(n)) => serde_json::Value::from(*n),
+        Some(value::Kind::StringValue(s)) => serde_json::Value::from(s.clone()),
+        Some(value::Kind::BoolValue(b)) => serde_json::Value::from(*b),
+        Some(value::Kind::StructValue(st)) => serde_json::Value::Object(
+            st.fields
+                .iter()
+                .map(|(k, val)| (k.clone(), prost_value_to_json(val)))
+                .collect(),
+        ),
+        Some(value::Kind::ListValue(lv)) => {
+            serde_json::Value::Array(lv.values.iter().map(prost_value_to_json).collect())
         }
-        _ => None,
-    })
+    }
+}
+
+fn struct_to_map(st: &Struct) -> HashMap<String, serde_json::Value> {
+    st.fields
+        .iter()
+        .map(|(k, v)| (k.clone(), prost_value_to_json(v)))
+        .collect()
 }
 
 fn tokenize(text: &str) -> Vec<String> {
@@ -148,36 +160,6 @@ fn jaccard_tokens(a: &str, b: &str) -> f64 {
     let inter = sa.intersection(&sb).count() as f64;
     let uni = sa.union(&sb).count() as f64;
     if uni == 0.0 { 0.0 } else { inter / uni }
-}
-
-fn encrypt_token(token: &str, key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{}:{}", key, token).as_bytes());
-    let digest = hasher.finalize();
-    let hex: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
-    hex.chars().take(24).collect()
-}
-
-fn encrypt_terms(text: &str, key: &str) -> Vec<String> {
-    tokenize(text)
-        .into_iter()
-        .map(|t| encrypt_token(&t, key))
-        .collect()
-}
-
-fn encrypt_structured_terms(text: &str, key: &str, use_bigrams: bool) -> Vec<String> {
-    let tokens = tokenize(text);
-    let mut out: Vec<String> = tokens
-        .iter()
-        .map(|t| encrypt_token(&format!("tok:{}", t), key))
-        .collect();
-    if use_bigrams && tokens.len() >= 2 {
-        for i in 0..(tokens.len() - 1) {
-            let bg = format!("{}_{}", tokens[i], tokens[i + 1]);
-            out.push(encrypt_token(&format!("bi:{}", bg), key));
-        }
-    }
-    out
 }
 
 fn row_to_struct(doc_id: &str, text: &str, metadata: Struct, score: f64) -> Struct {
@@ -262,17 +244,44 @@ impl SecureRetrieval for SecureRetrievalSvc {
                 Some(value::Kind::StructValue(s)) => s,
                 _ => Struct { fields: BTreeMap::new() },
             };
-            let enc_terms = get_string_list(&c, "enc_terms").unwrap_or_default();
-            let struct_terms = get_string_list(&c, "struct_terms").unwrap_or_default();
+            let scheme_data = c
+                .fields
+                .get("scheme_data")
+                .and_then(|v| match &v.kind {
+                    Some(value::Kind::StructValue(s)) => Some(struct_to_map(s)),
+                    _ => None,
+                })
+                .unwrap_or_default();
             rows.push(Row {
                 doc_id,
                 text: text.clone(),
                 metadata,
                 embedding: embed(&text, 64),
-                enc_terms,
-                struct_terms,
+                scheme_data,
             });
         }
+
+        let scheme_index = if req.protocol == "EncryptedSearch" {
+            let scheme_name = req.encrypted_search_scheme.to_ascii_lowercase();
+            let scheme = SCHEME_REGISTRY
+                .get(scheme_name.as_str())
+                .ok_or_else(|| Status::unimplemented(format!(
+                    "encrypted scheme '{}' not registered in Rust server",
+                    scheme_name
+                )))?;
+            let scheme_rows: Vec<SchemeRow> = rows
+                .iter()
+                .map(|r| SchemeRow {
+                    doc_id: r.doc_id.clone(),
+                    text: r.text.clone(),
+                    scheme_data: r.scheme_data.clone(),
+                })
+                .collect();
+            Some(scheme.build_index(&scheme_rows))
+        } else {
+            None
+        };
+
         let index_id = format!("rsgrpc-{}", uuid::Uuid::new_v4());
         let doc_count = rows.len() as i32;
         let mut guard = INDEXES.lock().map_err(|_| Status::internal("index lock poisoned"))?;
@@ -281,7 +290,15 @@ impl SecureRetrieval for SecureRetrievalSvc {
         } else {
             None
         };
-        guard.insert(index_id.clone(), Index { _protocol: req.protocol, dp_budget, chunks: rows });
+        guard.insert(
+            index_id.clone(),
+            Index {
+                _protocol: req.protocol,
+                dp_budget,
+                chunks: rows,
+                scheme_index,
+            },
+        );
         Ok(Response::new(BuildIndexResponse { index_id, doc_count }))
     }
 
@@ -396,116 +413,35 @@ impl SecureRetrieval for SecureRetrievalSvc {
         Ok(Response::new(RetrieveByEmbeddingResponse { rows }))
     }
 
-    async fn sse_generate_key(&self, _request: Request<SseGenerateKeyRequest>) -> Result<Response<SseGenerateKeyResponse>, Status> {
-        let mut bytes = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut bytes);
-        let key = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-        Ok(Response::new(SseGenerateKeyResponse { key }))
-    }
-
-    async fn sse_encrypt_terms(&self, request: Request<SseEncryptTermsRequest>) -> Result<Response<SseEncryptTermsResponse>, Status> {
-        let req = request.into_inner();
-        Ok(Response::new(SseEncryptTermsResponse {
-            terms: encrypt_terms(&req.text, &req.key),
-        }))
-    }
-
-    async fn sse_encrypt_structured_terms(
-        &self,
-        request: Request<SseEncryptStructuredTermsRequest>,
-    ) -> Result<Response<SseEncryptStructuredTermsResponse>, Status> {
-        let req = request.into_inner();
-        Ok(Response::new(SseEncryptStructuredTermsResponse {
-            terms: encrypt_structured_terms(&req.text, &req.key, req.use_bigrams),
-        }))
-    }
-
-    async fn sse_prepare_chunks(&self, request: Request<SsePrepareChunksRequest>) -> Result<Response<SsePrepareChunksResponse>, Status> {
-        let req = request.into_inner();
-        let scheme = req.scheme.to_ascii_lowercase();
-        let mut out = Vec::new();
-        for mut c in req.chunks {
-            let text = get_string(&c, "text").unwrap_or_default();
-            if scheme == "sse" {
-                let terms = encrypt_terms(&text, &req.key)
-                    .into_iter()
-                    .map(|x| str_value(&x))
-                    .collect();
-                c.fields.insert("enc_terms".to_string(), list_value(terms));
-            } else if scheme == "structured" || scheme == "structured_encryption" {
-                let terms = encrypt_structured_terms(&text, &req.key, req.use_bigrams)
-                    .into_iter()
-                    .map(|x| str_value(&x))
-                    .collect();
-                c.fields.insert("struct_terms".to_string(), list_value(terms));
-            } else {
-                return Err(Status::invalid_argument("unknown encrypted search scheme"));
-            }
-            out.push(c);
-        }
-        Ok(Response::new(SsePrepareChunksResponse { chunks: out }))
-    }
-
-    async fn sse_search(&self, request: Request<SseSearchRequest>) -> Result<Response<SseSearchResponse>, Status> {
+    async fn encrypted_search(&self, request: Request<EncryptedSearchRequest>) -> Result<Response<EncryptedSearchResponse>, Status> {
         let req = request.into_inner();
         let top_k = req.top_k.max(0) as usize;
-        let qset: HashSet<String> = req.enc_terms.into_iter().collect();
         let guard = INDEXES.lock().map_err(|_| Status::internal("index lock poisoned"))?;
         let index = guard.get(&req.index_id).ok_or_else(|| Status::not_found("index not found"))?;
+        let scheme_index = index
+            .scheme_index
+            .as_ref()
+            .ok_or_else(|| Status::failed_precondition("index was not built with an encrypted scheme"))?;
 
-        let mut scored: Vec<(f64, usize)> = index
-            .chunks
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                let tset: HashSet<String> = r.enc_terms.iter().cloned().collect();
-                let inter = qset.intersection(&tset).count() as f64;
-                let uni = qset.union(&tset).count() as f64;
-                (if uni == 0.0 { 0.0 } else { inter / uni }, i)
-            })
-            .collect();
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let encrypted_query = req
+            .encrypted_query
+            .as_ref()
+            .map(struct_to_map)
+            .unwrap_or_default();
+        let results = scheme_index.search(&encrypted_query, top_k);
 
-        let rows = scored
+        let rows = results
             .into_iter()
-            .take(top_k)
-            .map(|(score, i)| {
-                let r = &index.chunks[i];
-                row_to_struct(&r.doc_id, &r.text, r.metadata.clone(), score)
+            .map(|r| {
+                row_to_struct(
+                    &r.doc_id,
+                    &r.text,
+                    Struct { fields: BTreeMap::new() },
+                    r.score,
+                )
             })
             .collect();
-        Ok(Response::new(SseSearchResponse { rows }))
-    }
-
-    async fn structured_search(&self, request: Request<StructuredSearchRequest>) -> Result<Response<StructuredSearchResponse>, Status> {
-        let req = request.into_inner();
-        let top_k = req.top_k.max(0) as usize;
-        let qset: HashSet<String> = req.struct_terms.into_iter().collect();
-        let guard = INDEXES.lock().map_err(|_| Status::internal("index lock poisoned"))?;
-        let index = guard.get(&req.index_id).ok_or_else(|| Status::not_found("index not found"))?;
-
-        let mut scored: Vec<(f64, usize)> = index
-            .chunks
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                let tset: HashSet<String> = r.struct_terms.iter().cloned().collect();
-                let inter = qset.intersection(&tset).count() as f64;
-                let uni = qset.union(&tset).count() as f64;
-                (if uni == 0.0 { 0.0 } else { inter / uni }, i)
-            })
-            .collect();
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        let rows = scored
-            .into_iter()
-            .take(top_k)
-            .map(|(score, i)| {
-                let r = &index.chunks[i];
-                row_to_struct(&r.doc_id, &r.text, r.metadata.clone(), score)
-            })
-            .collect();
-        Ok(Response::new(StructuredSearchResponse { rows }))
+        Ok(Response::new(EncryptedSearchResponse { rows }))
     }
 }
 

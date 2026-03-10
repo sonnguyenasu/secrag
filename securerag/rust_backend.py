@@ -33,42 +33,6 @@ class RustBackend:
     def sanitize(self, chunks: list[dict]) -> list[dict]:
         return self._call("sanitize", {"chunks": chunks})
 
-    def sse_generate_key(self) -> str:
-        return self._call("sse_generate_key", {})
-
-    def sse_encrypt_terms(self, text: str, key: str) -> list[str]:
-        return self._call("sse_encrypt_terms", {"text": text, "key": key})
-
-    def sse_encrypt_structured_terms(
-        self,
-        text: str,
-        key: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[str]:
-        return self._call(
-            "sse_encrypt_structured_terms",
-            {"text": text, "key": key, "use_bigrams": use_bigrams},
-        )
-
-    def sse_prepare_chunks(
-        self,
-        chunks: list[dict],
-        key: str,
-        scheme: str,
-        *,
-        use_bigrams: bool = True,
-    ) -> list[dict]:
-        return self._call(
-            "sse_prepare_chunks",
-            {
-                "chunks": chunks,
-                "key": key,
-                "scheme": scheme,
-                "use_bigrams": use_bigrams,
-            },
-        )
-
     def build_index(
         self,
         protocol: str,
@@ -76,6 +40,7 @@ class RustBackend:
         *,
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
+        encrypted_search_scheme: str = "",
     ) -> dict:
         return self._call(
             "build_index",
@@ -84,6 +49,7 @@ class RustBackend:
                 "chunks": chunks,
                 "epsilon": epsilon,
                 "delta": delta,
+                "encrypted_search_scheme": encrypted_search_scheme,
             },
         )
 
@@ -118,22 +84,12 @@ class RustBackend:
             },
         )
 
-    def sse_search(self, index_id: str, enc_terms: list[str], top_k: int) -> list[dict]:
+    def encrypted_search(self, index_id: str, encrypted_query: dict[str, Any], top_k: int) -> list[dict]:
         return self._call(
-            "sse_search",
+            "encrypted_search",
             {
                 "index_id": index_id,
-                "enc_terms": enc_terms,
-                "top_k": top_k,
-            },
-        )
-
-    def structured_search(self, index_id: str, struct_terms: list[str], top_k: int) -> list[dict]:
-        return self._call(
-            "structured_search",
-            {
-                "index_id": index_id,
-                "struct_terms": struct_terms,
+                "encrypted_query": encrypted_query,
                 "top_k": top_k,
             },
         )

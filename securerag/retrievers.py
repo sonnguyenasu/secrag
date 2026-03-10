@@ -3,6 +3,7 @@ import math
 from securerag.errors import UnsupportedCapabilityError
 from securerag.protocol import PrivacyProtocol
 from securerag.retriever import PrivacyRetriever
+from securerag.scheme_plugin import EncryptedSchemePlugin
 
 
 @PrivacyRetriever.register(PrivacyProtocol.BASELINE)
@@ -81,49 +82,31 @@ class DiffPrivacyRetriever(PrivacyRetriever):
 @PrivacyRetriever.register(PrivacyProtocol.ENCRYPTED_SEARCH)
 class EncryptedSearchRetriever(PrivacyRetriever):
     def retrieve(self, query: str, round_n: int):
-        scheme = str(getattr(self.config, "encrypted_search_scheme", "sse")).lower()
-        if scheme in {"structured_encryption", "structured"}:
-            scheme = "structured"
-
         enc_key = self.corpus.extras.get("enc_key")
         if not enc_key:
-            raise UnsupportedCapabilityError("ENCRYPTED_SEARCH requires corpus with client-side SSE key")
-
-        if scheme == "sse":
-            enc_terms = self._backend.sse_encrypt_terms(query, enc_key)
-            self._debug(
-                "encrypted-search retrieval",
-                round_n=round_n,
-                scheme=scheme,
-                encrypted_query_terms=enc_terms,
-            )
-            rows = self._backend.sse_search(
-                index_id=self.corpus.index_id,
-                enc_terms=enc_terms,
-                top_k=self.config.top_k,
-            )
-        elif scheme == "structured":
-            struct_terms = self._backend.sse_encrypt_structured_terms(
-                text=query,
-                key=enc_key,
-                use_bigrams=self.config.structured_use_bigrams,
-            )
-            self._debug(
-                "encrypted-search retrieval",
-                round_n=round_n,
-                scheme=scheme,
-                encrypted_structured_terms=struct_terms,
-            )
-            rows = self._backend.structured_search(
-                index_id=self.corpus.index_id,
-                struct_terms=struct_terms,
-                top_k=self.config.top_k,
-            )
-        else:
             raise UnsupportedCapabilityError(
-                f"Encrypted search scheme '{scheme}' is not implemented yet. "
-                "Use encrypted_search_scheme='sse' or 'structured'."
+                "ENCRYPTED_SEARCH requires a corpus built with EncryptedSchemePlugin"
             )
+
+        plugin: EncryptedSchemePlugin | None = self.corpus.extras.get("plugin")
+        if plugin is None:
+            scheme_name = self.corpus.extras.get("encrypted_search_scheme", "sse")
+            plugin = EncryptedSchemePlugin.get(scheme_name)
+
+        encrypted_query = plugin.encrypt_query(query, enc_key)
+
+        self._debug(
+            "encrypted-search retrieval",
+            round_n=round_n,
+            scheme=self.corpus.extras.get("encrypted_search_scheme"),
+            encrypted_query_keys=list(encrypted_query),
+        )
+
+        rows = self._backend.encrypted_search(
+            index_id=self.corpus.index_id,
+            encrypted_query=encrypted_query,
+            top_k=self.config.top_k,
+        )
         return self._to_docs(rows)
 
     def privacy_cost(self, query: str) -> float:
@@ -133,7 +116,7 @@ class EncryptedSearchRetriever(PrivacyRetriever):
 @PrivacyRetriever.register(PrivacyProtocol.PIR)
 class PIRRetriever(PrivacyRetriever):
     def retrieve(self, query: str, round_n: int):
-        raise UnsupportedCapabilityError("PIR is API-complete but not implemented in this MVP")
+        raise UnsupportedCapabilityError("PIR is API-complete but not implemented in this build")
 
     def privacy_cost(self, query: str) -> float:
         return 0.0
