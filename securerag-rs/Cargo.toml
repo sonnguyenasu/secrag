@@ -1,0 +1,17 @@
+[package]
+name = "securerag_rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "securerag_rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module"], optional = true }
+once_cell = "1.19"
+serde_json = "1.0"
+
+[features]
+default = []
+python-bridge = ["dep:pyo3"]
