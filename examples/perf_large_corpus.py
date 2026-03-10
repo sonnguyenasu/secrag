@@ -99,7 +99,7 @@ def run_benchmark(
         )
 
     b0 = time.perf_counter()
-    corpus = builder.build()
+    corpus = builder.build_local(workers=4)
     b1 = time.perf_counter()
 
     llm = ModelAgentLLM(

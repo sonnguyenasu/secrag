@@ -6,9 +6,13 @@ from pathlib import Path
 import re
 
 from securerag.backend_client import create_backend
+from securerag.builtin_schemes import StructuredPlugin
 from securerag.models import CorpusMeta, RawDocument
 from securerag.protocol import PrivacyProtocol
 from securerag.scheme_plugin import EncryptedSchemePlugin
+
+
+ENCRYPTED_SEARCH_VERSION = "hmac-sha256-v1"
 
 
 class SecureCorpus(ABC):
@@ -136,12 +140,16 @@ class CorpusBuilder:
 
         extras: dict = {}
         if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
-            plugin = EncryptedSchemePlugin.get(self._encrypted_search_scheme)
+            if self._encrypted_search_scheme in {"structured", "structured_encryption"}:
+                plugin = StructuredPlugin(use_bigrams=self._structured_use_bigrams)
+            else:
+                plugin = EncryptedSchemePlugin.get(self._encrypted_search_scheme)
             enc_key = plugin.generate_key()
             for chunk in chunks:
                 chunk["scheme_data"] = plugin.prepare_chunk(chunk["text"], enc_key)
             extras["enc_key"] = enc_key
             extras["encrypted_search_scheme"] = self._encrypted_search_scheme
+            extras["encrypted_search_version"] = ENCRYPTED_SEARCH_VERSION
             extras["plugin"] = plugin
 
         index_payload = self._backend.build_index(
@@ -150,6 +158,9 @@ class CorpusBuilder:
             epsilon=self._epsilon,
             delta=self._delta,
             encrypted_search_scheme=self._encrypted_search_scheme
+            if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
+            else "",
+            encrypted_search_version=ENCRYPTED_SEARCH_VERSION
             if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
             else "",
         )
@@ -222,18 +233,21 @@ class CorpusBuilder:
 
         extras: dict = {}
         if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
-            plugin = EncryptedSchemePlugin.get(self._encrypted_search_scheme)
+            if self._encrypted_search_scheme in {"structured", "structured_encryption"}:
+                plugin = StructuredPlugin(use_bigrams=self._structured_use_bigrams)
+            else:
+                plugin = EncryptedSchemePlugin.get(self._encrypted_search_scheme)
             enc_key = plugin.generate_key()
 
             def _prep(chunk: dict) -> dict:
-                chunk["scheme_data"] = plugin.prepare_chunk(chunk["text"], enc_key)
-                return chunk
+                return {**chunk, "scheme_data": plugin.prepare_chunk(chunk["text"], enc_key)}
 
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 chunks = list(ex.map(_prep, chunks))
 
             extras["enc_key"] = enc_key
             extras["encrypted_search_scheme"] = self._encrypted_search_scheme
+            extras["encrypted_search_version"] = ENCRYPTED_SEARCH_VERSION
             extras["plugin"] = plugin
 
         index_payload = self._backend.build_index(
@@ -242,6 +256,9 @@ class CorpusBuilder:
             epsilon=self._epsilon,
             delta=self._delta,
             encrypted_search_scheme=self._encrypted_search_scheme
+            if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
+            else "",
+            encrypted_search_version=ENCRYPTED_SEARCH_VERSION
             if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
             else "",
         )

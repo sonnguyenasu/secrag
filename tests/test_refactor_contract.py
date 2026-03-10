@@ -89,11 +89,12 @@ def _sample_docs() -> list[RawDocument]:
 def test_markdown_conflict_resolution_prefers_refactor_contract() -> None:
     root = Path(__file__).resolve().parents[1]
     refactor_md = (root / "refactor.md").read_text(encoding="utf-8")
-    api_md = (root / "securerag-api-design.md").read_text(encoding="utf-8")
-
-    # Conflicting legacy API expectations exist in api design doc.
-    assert "sse_search" in api_md
-    assert "sse_encrypt_query" in api_md or "sse_encrypt_terms" in api_md
+    api_design_path = root / "securerag-api-design.md"
+    if api_design_path.exists():
+        api_md = api_design_path.read_text(encoding="utf-8")
+        # Conflicting legacy API expectations exist in api design doc.
+        assert "sse_search" in api_md
+        assert "sse_encrypt_query" in api_md or "sse_encrypt_terms" in api_md
 
     # Refactor contract explicitly replaces them with encrypted_search plugin flow.
     assert "EncryptedSchemePlugin" in refactor_md
@@ -142,6 +143,113 @@ def test_plugin_registry_and_builder_contract() -> None:
                 .with_encrypted_search_scheme("not_registered")
                 .add_documents(docs)
                 .build_local()
+            )
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_structured_use_bigrams_toggle_is_effective() -> None:
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    proc = _launch_sim_server(port)
+    docs = _sample_docs()
+    try:
+        _wait_for_health(base_url)
+
+        with_bigrams = (
+            CorpusBuilder(PrivacyProtocol.ENCRYPTED_SEARCH, backend_url=base_url)
+            .with_encrypted_search_scheme("structured", structured_use_bigrams=True)
+            .add_documents(docs)
+            .build_local(workers=2)
+        )
+        without_bigrams = (
+            CorpusBuilder(PrivacyProtocol.ENCRYPTED_SEARCH, backend_url=base_url)
+            .with_encrypted_search_scheme("structured", structured_use_bigrams=False)
+            .add_documents(docs)
+            .build_local(workers=2)
+        )
+
+        assert getattr(with_bigrams.extras["plugin"], "use_bigrams") is True
+        assert getattr(without_bigrams.extras["plugin"], "use_bigrams") is False
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_sim_server_rejects_incompatible_encrypted_search_version() -> None:
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    proc = _launch_sim_server(port)
+
+    try:
+        _wait_for_health(base_url)
+        backend = create_backend(base_url)
+        plugin = EncryptedSchemePlugin.get("sse")
+        key = "0123456789abcdef0123456789abcdef"
+        docs = _sample_docs()
+        chunks = [
+            {
+                "doc_id": d.doc_id,
+                "text": d.text,
+                "metadata": d.metadata,
+                "scheme_data": plugin.prepare_chunk(d.text, key),
+            }
+            for d in docs
+        ]
+
+        idx = backend.build_index(
+            "EncryptedSearch",
+            chunks,
+            encrypted_search_scheme="sse",
+            encrypted_search_version="sha256-v0",
+        )
+
+        with pytest.raises(BackendError, match="incompatible"):
+            backend.encrypted_search(idx["index_id"], plugin.encrypt_query("q3 risk", key), 3)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_sim_server_uses_rdp_accumulation_not_per_round_eps_sum() -> None:
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    proc = _launch_sim_server(port)
+
+    try:
+        _wait_for_health(base_url)
+        backend = create_backend(base_url)
+        docs = _sample_docs()
+        chunks = [{"doc_id": d.doc_id, "text": d.text, "metadata": d.metadata} for d in docs]
+        idx = backend.build_index(
+            "DiffPrivacy",
+            chunks,
+            epsilon=9.0,
+            delta=1e-5,
+        )
+
+        emb1 = backend.embed_with_noise("q3 risk", sigma=1.0)
+        emb2 = backend.embed_with_noise("vendor concentration", sigma=1.0)
+        emb3 = backend.embed_with_noise("delayed remediation", sigma=1.0)
+
+        # Under accumulated-RDP accounting: first two rounds pass, third exhausts.
+        backend.retrieve_by_embedding(idx["index_id"], emb1, 2, query="q3 risk", sigma=1.0)
+        backend.retrieve_by_embedding(
+            idx["index_id"], emb2, 2, query="vendor concentration", sigma=1.0
+        )
+        with pytest.raises(BackendError, match="DP budget exhausted"):
+            backend.retrieve_by_embedding(
+                idx["index_id"], emb3, 2, query="delayed remediation", sigma=1.0
             )
     finally:
         proc.terminate()

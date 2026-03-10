@@ -28,6 +28,7 @@ class Backend(ABC):
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
         encrypted_search_scheme: str = "",
+        encrypted_search_version: str = "",
     ) -> dict:
         raise NotImplementedError
 
@@ -89,6 +90,7 @@ class RemoteBackend(Backend):
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
         encrypted_search_scheme: str = "",
+        encrypted_search_version: str = "",
     ) -> dict:
         return self._call(
             "build_index",
@@ -98,6 +100,7 @@ class RemoteBackend(Backend):
                 "epsilon": epsilon,
                 "delta": delta,
                 "encrypted_search_scheme": encrypted_search_scheme,
+                "encrypted_search_version": encrypted_search_version,
             },
         )
 
@@ -197,6 +200,7 @@ class GrpcBackend(Backend):
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
         encrypted_search_scheme: str = "",
+        encrypted_search_version: str = "",
     ) -> dict:
         req = self._grpc_pb2.BuildIndexRequest(
             protocol=protocol,

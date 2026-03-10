@@ -41,6 +41,7 @@ class RustBackend:
         epsilon: float = 1_000_000.0,
         delta: float = 1e-5,
         encrypted_search_scheme: str = "",
+        encrypted_search_version: str = "",
     ) -> dict:
         return self._call(
             "build_index",
@@ -50,6 +51,7 @@ class RustBackend:
                 "epsilon": epsilon,
                 "delta": delta,
                 "encrypted_search_scheme": encrypted_search_scheme,
+                "encrypted_search_version": encrypted_search_version,
             },
         )
 

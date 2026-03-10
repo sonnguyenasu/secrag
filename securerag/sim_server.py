@@ -15,6 +15,11 @@ app = FastAPI(title="SecureRAG pseudo-remote server", version="0.1.0")
 _INDEXES: dict[str, dict[str, Any]] = {}
 LEXICAL_WEIGHT = 0.65
 EMBEDDING_WEIGHT = 0.35
+ENCRYPTED_SEARCH_VERSION = "hmac-sha256-v1"
+
+
+def _rdp_to_dp(rdp_eps: list[float], delta: float, orders: list[float]) -> float:
+    return min(r + math.log(1.0 / delta) / (a - 1.0) for a, r in zip(orders, rdp_eps))
 
 
 class RPCRequest(BaseModel):
@@ -161,6 +166,7 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
             delta = float(p.get("delta", 1e-5))
             chunks = p["chunks"]
             scheme = p.get("encrypted_search_scheme")
+            scheme_version = p.get("encrypted_search_version") or ENCRYPTED_SEARCH_VERSION
 
             rows = []
             for c in chunks:
@@ -190,6 +196,7 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
                 "server_index": server_index,
                 "rows": rows,
                 "scheme": scheme,
+                "encrypted_search_version": scheme_version,
                 "epsilon": epsilon,
                 "delta": delta,
                 "rdp_acc": [0.0] * 5,
@@ -202,6 +209,16 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
             encrypted_query = p["encrypted_query"]
             top_k = int(p["top_k"])
             scheme = index.get("scheme")
+            version = index.get("encrypted_search_version") or "sha256-v0"
+
+            if scheme and version != ENCRYPTED_SEARCH_VERSION:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Index built with crypto version '{version}' is incompatible with "
+                        f"current '{ENCRYPTED_SEARCH_VERSION}'. Rebuild the corpus."
+                    ),
+                }
 
             if scheme:
                 from securerag.scheme_plugin import EncryptedSchemePlugin
@@ -248,10 +265,15 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
                 orders = [2.0, 4.0, 8.0, 16.0, 32.0]
                 rdp = [a / (2.0 * sigma * sigma) for a in orders]
                 delta = float(index.get("delta", 1e-5))
-                eps = min(r + math.log(1.0 / delta) / (a - 1.0) for a, r in zip(orders, rdp))
-                index["spent"] = float(index.get("spent", 0.0)) + eps
-                if index["spent"] > float(index.get("epsilon", 1.0)):
+                acc = list(index.get("rdp_acc", [0.0] * len(orders)))
+                if len(acc) != len(orders):
+                    acc = [0.0] * len(orders)
+                candidate_acc = [x + y for x, y in zip(acc, rdp)]
+                candidate_eps = _rdp_to_dp(candidate_acc, delta, orders)
+                if candidate_eps > float(index.get("epsilon", 1.0)):
                     return {"ok": False, "error": "DP budget exhausted"}
+                index["rdp_acc"] = candidate_acc
+                index["spent"] = candidate_eps
             out = _retrieve_embedding(index, emb, top_k, query=query)
             return {"ok": True, "data": out}
 

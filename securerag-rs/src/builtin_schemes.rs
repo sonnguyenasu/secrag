@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
+#[cfg(test)]
 use hmac::{Hmac, Mac};
+#[cfg(test)]
 use sha2::Sha256;
 
 use crate::encrypted_scheme::{EncryptedScheme, SchemeIndex, SchemeRow, SearchResult};
@@ -111,6 +113,7 @@ impl EncryptedScheme for RustStructuredScheme {
     }
 }
 
+#[cfg(test)]
 pub fn hmac_sha256_hex(token: &str, key: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("valid key");
     mac.update(token.as_bytes());

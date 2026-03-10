@@ -8,6 +8,17 @@ _REGISTRY: dict[str, "EncryptedSchemePlugin"] = {}
 
 
 class EncryptedSchemePlugin(ABC):
+    """
+    Scheme extension point for encrypted search.
+
+    Call order used by the framework:
+    1) Corpus build (client): generate_key -> prepare_chunk -> build_server_index
+    2) Query time (client): encrypt_query
+    3) Query time (server): search
+
+    The scheme key always remains client-side and is never sent to the server.
+    """
+
     @abstractmethod
     def generate_key(self) -> Any:
         raise NotImplementedError

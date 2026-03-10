@@ -188,20 +188,22 @@ impl BackendBridge {
                 let top_k: usize = required_item(&payload, "top_k")?.extract()?;
                 let enc_query = required_item(&payload, "encrypted_query")?;
 
-                let guard = INDEXES
-                    .lock()
-                    .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let state = guard
-                    .get(&index_id)
-                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
-
-                let plugin = state.enc_plugin.as_ref().ok_or_else(|| {
-                    PyRuntimeError::new_err("index was not built with an encrypted scheme")
-                })?;
-                let srv_idx = state
-                    .server_index
-                    .as_ref()
-                    .ok_or_else(|| PyRuntimeError::new_err("server index not initialised"))?;
+                let (plugin, srv_idx) = {
+                    let guard = INDEXES
+                        .lock()
+                        .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
+                    let state = guard
+                        .get(&index_id)
+                        .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
+                    let plugin = state.enc_plugin.as_ref().ok_or_else(|| {
+                        PyRuntimeError::new_err("index was not built with an encrypted scheme")
+                    })?;
+                    let srv_idx = state
+                        .server_index
+                        .as_ref()
+                        .ok_or_else(|| PyRuntimeError::new_err("server index not initialised"))?;
+                    (plugin.clone_ref(py), srv_idx.clone_ref(py))
+                };
 
                 let results = plugin
                     .bind(py)
@@ -286,9 +288,6 @@ impl BackendBridge {
                         .as_nanos()
                 );
 
-                let mut guard = INDEXES
-                    .lock()
-                    .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
                 let dp_budget = if protocol == PrivacyProtocol::DiffPrivacy {
                     Some(Arc::new(Mutex::new(RDPAccountant::new(epsilon, delta))))
                 } else {
@@ -321,6 +320,10 @@ impl BackendBridge {
                 } else {
                     (None, None)
                 };
+
+                let mut guard = INDEXES
+                    .lock()
+                    .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
 
                 guard.insert(
                     index_id.clone(),

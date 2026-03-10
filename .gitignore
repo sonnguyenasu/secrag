@@ -7,3 +7,4 @@ __pycache__/
 securerag.egg-info/
 securerag-api*
 securerag-rs/target
+codereview.md
