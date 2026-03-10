@@ -71,6 +71,7 @@ class Backend(ABC):
         embedding: list[float],
         top_k: int,
         query: str | None = None,
+        sigma: float | None = None,
     ) -> list[dict]:
         raise NotImplementedError
 
@@ -162,6 +163,7 @@ class RemoteBackend(Backend):
         embedding: list[float],
         top_k: int,
         query: str | None = None,
+        sigma: float | None = None,
     ) -> list[dict]:
         return self._call(
             "retrieve_by_embedding",
@@ -170,6 +172,7 @@ class RemoteBackend(Backend):
                 "embedding": embedding,
                 "top_k": top_k,
                 "query": query,
+                "sigma": sigma,
             },
         )
 
@@ -311,6 +314,7 @@ class GrpcBackend(Backend):
         embedding: list[float],
         top_k: int,
         query: str | None = None,
+        sigma: float | None = None,
     ) -> list[dict]:
         req = self._grpc_pb2.RetrieveByEmbeddingRequest(
             index_id=index_id,

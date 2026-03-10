@@ -64,6 +64,7 @@ class DiffPrivacyRetriever(PrivacyRetriever):
             embedding=noised,
             top_k=self.config.top_k,
             query=query,
+            sigma=self.config.noise_std,
         )
         return self._to_docs(rows)
 

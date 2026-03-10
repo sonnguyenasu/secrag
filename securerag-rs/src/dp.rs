@@ -1,16 +1,18 @@
 pub struct RDPAccountant {
     pub epsilon_max: f64,
+    pub delta: f64,
     pub spent: f64,
     pub orders: Vec<f64>,
     pub rdp_epsilons: Vec<f64>,
 }
 
 impl RDPAccountant {
-    pub fn new(epsilon_max: f64) -> Self {
+    pub fn new(epsilon_max: f64, delta: f64) -> Self {
         let orders = vec![2.0, 4.0, 8.0, 16.0, 32.0];
         let rdp_epsilons = vec![0.0; orders.len()];
         Self {
             epsilon_max,
+            delta,
             spent: 0.0,
             orders,
             rdp_epsilons,
@@ -37,7 +39,39 @@ impl RDPAccountant {
     fn rdp_to_dp(&self) -> f64 {
         self.rdp_epsilons
             .iter()
-            .copied()
+            .zip(self.orders.iter())
+            .filter(|(_, alpha)| **alpha > 1.0)
+            .map(|(rdp, alpha)| {
+                let delta_term = (1.0 / self.delta).ln() / (alpha - 1.0);
+                *rdp + delta_term
+            })
             .fold(f64::INFINITY, f64::min)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RDPAccountant;
+
+    #[test]
+    fn rdp_to_dp_uses_delta_conversion_term() {
+        let mut acc = RDPAccountant::new(1_000.0, 1e-5);
+        acc.consume_rdp(1.0).expect("consume should succeed");
+
+        let expected = acc
+            .orders
+            .iter()
+            .zip(acc.rdp_epsilons.iter())
+            .map(|(alpha, rdp)| rdp + (1.0_f64 / 1e-5_f64).ln() / (alpha - 1.0))
+            .fold(f64::INFINITY, f64::min);
+
+        assert!((acc.spent - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn consume_respects_budget_after_conversion() {
+        let mut acc = RDPAccountant::new(0.5, 1e-5);
+        let err = acc.consume_rdp(10.0).expect_err("budget should be exhausted");
+        assert!(err.contains("Budget exhausted"));
     }
 }

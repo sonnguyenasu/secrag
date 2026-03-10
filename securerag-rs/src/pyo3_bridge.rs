@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use once_cell::sync::Lazy;
 use pyo3::exceptions::PyRuntimeError;
@@ -11,7 +11,8 @@ use sha2::{Digest, Sha256};
 use crate::builders::{EmbeddingIndexBuilder, PlainIndexBuilder, UnsupportedBuilder};
 use crate::core::CorpusProcessor;
 use crate::core::RetrieverCore;
-use crate::engines::BaselineEngine;
+use crate::dp::RDPAccountant;
+use crate::engines::{BaselineEngine, DPMechanism};
 use crate::protocol::PrivacyProtocol;
 use crate::types::{Chunk, IndexPayload};
 
@@ -19,11 +20,19 @@ use crate::types::{Chunk, IndexPayload};
 struct Row {
     doc_id: String,
     text: String,
+    embedding: Vec<f64>,
     enc_terms: Vec<String>,
     struct_terms: Vec<String>,
 }
 
-static INDEXES: Lazy<Mutex<HashMap<String, Vec<Row>>>> =
+#[derive(Clone)]
+struct IndexState {
+    protocol: PrivacyProtocol,
+    rows: Vec<Row>,
+    dp_budget: Option<Arc<Mutex<RDPAccountant>>>,
+}
+
+static INDEXES: Lazy<Mutex<HashMap<String, IndexState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn required_item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
@@ -42,6 +51,52 @@ fn tokenize(text: &str) -> Vec<String> {
             t
         })
         .collect()
+}
+
+fn embed(text: &str, dim: usize) -> Vec<f64> {
+    let mut vec = vec![0.0; dim];
+    let tokens = tokenize(text);
+    if tokens.is_empty() {
+        return vec;
+    }
+    for tok in tokens {
+        let h = Sha256::digest(tok.as_bytes());
+        let mut first8 = [0u8; 8];
+        first8.copy_from_slice(&h[0..8]);
+        let hv = u64::from_be_bytes(first8);
+        let idx = (hv as usize) % dim;
+        let sign = if ((hv >> 8) & 1) == 0 { 1.0 } else { -1.0 };
+        vec[idx] += sign;
+    }
+    let norm = vec.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if norm > 0.0 {
+        for x in &mut vec {
+            *x /= norm;
+        }
+    }
+    vec
+}
+
+fn cos(a: &[f64], b: &[f64]) -> f64 {
+    let dot = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f64>();
+    let na = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let nb = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
+}
+
+fn lexical_jaccard(query: &str, text: &str) -> f64 {
+    let qset: std::collections::HashSet<String> = tokenize(query).into_iter().collect();
+    let tset: std::collections::HashSet<String> = tokenize(text).into_iter().collect();
+    if qset.is_empty() || tset.is_empty() {
+        return 0.0;
+    }
+    let inter = qset.intersection(&tset).count() as f64;
+    let union = qset.union(&tset).count() as f64;
+    if union == 0.0 { 0.0 } else { inter / union }
 }
 
 fn generate_sse_key() -> String {
@@ -270,9 +325,14 @@ impl BackendBridge {
                     rows.push(Row {
                         doc_id,
                         text,
+                        embedding: Vec::new(),
                         enc_terms,
                         struct_terms,
                     });
+                }
+
+                for row in &mut rows {
+                    row.embedding = embed(&row.text, 64);
                 }
 
                 let processor: Box<dyn CorpusProcessor> = match protocol {
@@ -300,7 +360,19 @@ impl BackendBridge {
                 let mut guard = INDEXES
                     .lock()
                     .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                guard.insert(index_id.clone(), rows);
+                let dp_budget = if protocol == PrivacyProtocol::DiffPrivacy {
+                    Some(Arc::new(Mutex::new(RDPAccountant::new(1_000_000.0, 1e-5))))
+                } else {
+                    None
+                };
+                guard.insert(
+                    index_id.clone(),
+                    IndexState {
+                        protocol,
+                        rows,
+                        dp_budget,
+                    },
+                );
 
                 let out = PyDict::new(py);
                 out.set_item("index_id", index_id)?;
@@ -316,11 +388,12 @@ impl BackendBridge {
                 let guard = INDEXES
                     .lock()
                     .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let rows = guard
+                let state = guard
                     .get(&index_id)
                     .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
 
-                let engine_chunks: Vec<Chunk> = rows
+                let engine_chunks: Vec<Chunk> = state
+                    .rows
                     .iter()
                     .map(|r| Chunk {
                         doc_id: r.doc_id.clone(),
@@ -355,9 +428,10 @@ impl BackendBridge {
                 let guard = INDEXES
                     .lock()
                     .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let rows = guard
+                let rows = &guard
                     .get(&index_id)
-                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
+                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?
+                    .rows;
 
                 let out = PyList::empty(py);
                 if rows.is_empty() {
@@ -388,9 +462,10 @@ impl BackendBridge {
                 let guard = INDEXES
                     .lock()
                     .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let rows = guard
+                let rows = &guard
                     .get(&index_id)
-                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
+                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?
+                    .rows;
 
                 let mut scored: Vec<(f64, String, String)> = rows
                     .iter()
@@ -426,9 +501,10 @@ impl BackendBridge {
                 let guard = INDEXES
                     .lock()
                     .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let rows = guard
+                let rows = &guard
                     .get(&index_id)
-                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
+                    .ok_or_else(|| PyRuntimeError::new_err("index not found"))?
+                    .rows;
 
                 let mut scored: Vec<(f64, String, String)> = rows
                     .iter()
@@ -457,19 +533,23 @@ impl BackendBridge {
             "embed_with_noise" => {
                 let query: String = required_item(&payload, "query")?.extract()?;
                 let sigma: f64 = required_item(&payload, "sigma")?.extract()?;
-                let base = query.bytes().map(|b| b as f64 / 255.0).collect::<Vec<_>>();
+                let base = embed(&query, 64);
                 let mut out = Vec::new();
-                for (i, v) in base.iter().enumerate().take(16) {
-                    out.push(*v + sigma * ((i as f64) * 0.01));
-                }
-                while out.len() < 16 {
-                    out.push(0.0);
+                for (i, v) in base.iter().enumerate() {
+                    out.push(*v + sigma * ((i as f64) * 0.001));
                 }
                 Ok(PyList::new(py, out)?.into_any().unbind())
             }
             "retrieve_by_embedding" => {
                 let index_id: String = required_item(&payload, "index_id")?.extract()?;
                 let top_k: usize = required_item(&payload, "top_k")?.extract()?;
+                let embedding: Vec<f64> = required_item(&payload, "embedding")?.extract()?;
+                let sigma: f64 = payload
+                    .get_item("sigma")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<f64>().ok())
+                    .unwrap_or(1.0);
                 let query = payload
                     .get_item("query")
                     .ok()
@@ -481,19 +561,39 @@ impl BackendBridge {
                 let guard = INDEXES
                     .lock()
                     .map_err(|_| PyRuntimeError::new_err("index lock poisoned"))?;
-                let rows = guard
+                let state = guard
                     .get(&index_id)
                     .ok_or_else(|| PyRuntimeError::new_err("index not found"))?;
 
-                let mut scored: Vec<(f64, String, String)> = rows
+                if state.protocol == PrivacyProtocol::DiffPrivacy {
+                    if let Some(budget) = &state.dp_budget {
+                        let engine_chunks: Vec<Chunk> = state
+                            .rows
+                            .iter()
+                            .map(|r| Chunk {
+                                doc_id: r.doc_id.clone(),
+                                text: r.text.clone(),
+                            })
+                            .collect();
+                        let engine = DPMechanism {
+                            chunks: Arc::new(engine_chunks),
+                            sigma,
+                            budget: budget.clone(),
+                        };
+                        let _ = engine.retrieve(&query, top_k);
+                    }
+                }
+
+                let mut scored: Vec<(f64, String, String)> = state
+                    .rows
                     .iter()
                     .map(|r| {
+                        let emb_score = cos(&embedding, &r.embedding);
                         let score = if query.is_empty() {
-                            0.5
-                        } else if r.text.to_lowercase().contains(&query) {
-                            1.0
+                            emb_score
                         } else {
-                            0.1
+                            let lex_score = lexical_jaccard(&query, &r.text);
+                            0.65 * lex_score + 0.35 * emb_score
                         };
                         (score, r.doc_id.clone(), r.text.clone())
                     })

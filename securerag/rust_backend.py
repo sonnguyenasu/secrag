@@ -90,6 +90,7 @@ class RustBackend:
         embedding: list[float],
         top_k: int,
         query: str | None = None,
+        sigma: float | None = None,
     ) -> list[dict]:
         return self._call(
             "retrieve_by_embedding",
@@ -98,6 +99,7 @@ class RustBackend:
                 "embedding": embedding,
                 "top_k": top_k,
                 "query": query,
+                "sigma": sigma,
             },
         )
 
