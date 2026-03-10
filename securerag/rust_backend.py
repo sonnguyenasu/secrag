@@ -33,6 +33,42 @@ class RustBackend:
     def sanitize(self, chunks: list[dict]) -> list[dict]:
         return self._call("sanitize", {"chunks": chunks})
 
+    def sse_generate_key(self) -> str:
+        return self._call("sse_generate_key", {})
+
+    def sse_encrypt_terms(self, text: str, key: str) -> list[str]:
+        return self._call("sse_encrypt_terms", {"text": text, "key": key})
+
+    def sse_encrypt_structured_terms(
+        self,
+        text: str,
+        key: str,
+        *,
+        use_bigrams: bool = True,
+    ) -> list[str]:
+        return self._call(
+            "sse_encrypt_structured_terms",
+            {"text": text, "key": key, "use_bigrams": use_bigrams},
+        )
+
+    def sse_prepare_chunks(
+        self,
+        chunks: list[dict],
+        key: str,
+        scheme: str,
+        *,
+        use_bigrams: bool = True,
+    ) -> list[dict]:
+        return self._call(
+            "sse_prepare_chunks",
+            {
+                "chunks": chunks,
+                "key": key,
+                "scheme": scheme,
+                "use_bigrams": use_bigrams,
+            },
+        )
+
     def build_index(self, protocol: str, chunks: list[dict]) -> dict:
         return self._call("build_index", {"protocol": protocol, "chunks": chunks})
 

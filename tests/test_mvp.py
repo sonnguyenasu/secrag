@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from securerag import PrivacyConfig, PrivacyProtocol, SecureRAGAgent
+from securerag.backend_client import create_backend
 from securerag.budget import BudgetManager
 from securerag.corpus import CorpusBuilder
 from securerag.errors import UnsupportedCapabilityError
@@ -218,6 +219,80 @@ def test_top1_retrieval_parity_http_vs_rust(protocol: PrivacyProtocol, encrypted
         rust_top = _run_top1(protocol, "rust://local", docs, query, encrypted_scheme=encrypted_scheme)
 
         assert http_top == rust_top == "q3"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_sse_crypto_ops_parity_http_vs_rust():
+    pytest.importorskip("securerag_rs")
+
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "securerag.sim_server:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    try:
+        _wait_for_health(base_url)
+
+        http_backend = create_backend(base_url)
+        rust_backend = create_backend("rust://local")
+
+        text = "Q3 risks include vendor dependencies and delayed remediation plans."
+        key = "0123456789abcdef0123456789abcdef"
+        chunks = [{"doc_id": "q3", "text": text, "metadata": {"source": "unit"}}]
+
+        generated_key = rust_backend.sse_generate_key()
+        assert len(generated_key) == 32
+
+        assert http_backend.sse_encrypt_terms(text, key) == rust_backend.sse_encrypt_terms(text, key)
+        assert http_backend.sse_encrypt_structured_terms(
+            text,
+            key,
+            use_bigrams=True,
+        ) == rust_backend.sse_encrypt_structured_terms(
+            text,
+            key,
+            use_bigrams=True,
+        )
+
+        assert http_backend.sse_prepare_chunks(
+            chunks,
+            key,
+            "sse",
+            use_bigrams=True,
+        ) == rust_backend.sse_prepare_chunks(
+            chunks,
+            key,
+            "sse",
+            use_bigrams=True,
+        )
+        assert http_backend.sse_prepare_chunks(
+            chunks,
+            key,
+            "structured",
+            use_bigrams=True,
+        ) == rust_backend.sse_prepare_chunks(
+            chunks,
+            key,
+            "structured",
+            use_bigrams=True,
+        )
     finally:
         proc.terminate()
         try:

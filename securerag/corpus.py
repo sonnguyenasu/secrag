@@ -6,7 +6,6 @@ from pathlib import Path
 from securerag.backend_client import create_backend
 from securerag.models import CorpusMeta, RawDocument
 from securerag.protocol import PrivacyProtocol
-from securerag.sse import encrypt_structured_terms, encrypt_terms, generate_sse_key
 
 
 class SecureCorpus(ABC):
@@ -92,29 +91,16 @@ class CorpusBuilder:
         extras: dict = {}
         if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
             scheme = self._encrypted_search_scheme
-            enc_key = generate_sse_key()
-            if scheme == "sse":
-                chunks = [
-                    {
-                        **c,
-                        "enc_terms": encrypt_terms(c.get("text", ""), enc_key),
-                    }
-                    for c in chunks
-                ]
-            elif scheme in {"structured", "structured_encryption"}:
-                chunks = [
-                    {
-                        **c,
-                        "struct_terms": encrypt_structured_terms(
-                            c.get("text", ""),
-                            enc_key,
-                            use_bigrams=self._structured_use_bigrams,
-                        ),
-                    }
-                    for c in chunks
-                ]
+            enc_key = self._backend.sse_generate_key()
+            chunks = self._backend.sse_prepare_chunks(
+                chunks=chunks,
+                key=enc_key,
+                scheme=scheme,
+                use_bigrams=self._structured_use_bigrams,
+            )
+            if scheme in {"structured", "structured_encryption"}:
                 scheme = "structured"
-            else:
+            elif scheme != "sse":
                 raise ValueError(
                     f"Unknown encrypted search scheme for builder: {scheme}. "
                     "Use 'sse' or 'structured'."

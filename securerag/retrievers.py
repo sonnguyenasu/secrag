@@ -1,7 +1,6 @@
 from securerag.errors import UnsupportedCapabilityError
 from securerag.protocol import PrivacyProtocol
 from securerag.retriever import PrivacyRetriever
-from securerag.sse import encrypt_structured_terms, encrypt_terms
 
 
 @PrivacyRetriever.register(PrivacyProtocol.BASELINE)
@@ -84,7 +83,7 @@ class EncryptedSearchRetriever(PrivacyRetriever):
             raise UnsupportedCapabilityError("ENCRYPTED_SEARCH requires corpus with client-side SSE key")
 
         if scheme == "sse":
-            enc_terms = encrypt_terms(query, enc_key)
+            enc_terms = self._backend.sse_encrypt_terms(query, enc_key)
             self._debug(
                 "encrypted-search retrieval",
                 round_n=round_n,
@@ -97,9 +96,9 @@ class EncryptedSearchRetriever(PrivacyRetriever):
                 top_k=self.config.top_k,
             )
         elif scheme == "structured":
-            struct_terms = encrypt_structured_terms(
-                query,
-                enc_key,
+            struct_terms = self._backend.sse_encrypt_structured_terms(
+                text=query,
+                key=enc_key,
                 use_bigrams=self.config.structured_use_bigrams,
             )
             self._debug(

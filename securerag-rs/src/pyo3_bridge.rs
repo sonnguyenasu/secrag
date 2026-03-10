@@ -5,6 +5,8 @@ use once_cell::sync::Lazy;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use rand::RngCore;
+use sha2::{Digest, Sha256};
 
 use crate::protocol::PrivacyProtocol;
 
@@ -35,6 +37,44 @@ fn tokenize(text: &str) -> Vec<String> {
             t
         })
         .collect()
+}
+
+fn generate_sse_key() -> String {
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn encrypt_token(token: &str, key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{}:{}", key, token).as_bytes());
+    let digest = hasher.finalize();
+    let hex: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
+    hex.chars().take(24).collect()
+}
+
+fn encrypt_terms(text: &str, key: &str) -> Vec<String> {
+    tokenize(text)
+        .into_iter()
+        .map(|t| encrypt_token(&t, key))
+        .collect()
+}
+
+fn encrypt_structured_terms(text: &str, key: &str, use_bigrams: bool) -> Vec<String> {
+    let tokens = tokenize(text);
+    let mut out: Vec<String> = tokens
+        .iter()
+        .map(|t| encrypt_token(&format!("tok:{}", t), key))
+        .collect();
+
+    if use_bigrams && tokens.len() >= 2 {
+        for i in 0..(tokens.len() - 1) {
+            let bg = format!("{}_{}", tokens[i], tokens[i + 1]);
+            out.push(encrypt_token(&format!("bi:{}", bg), key));
+        }
+    }
+
+    out
 }
 
 fn lexical_score(query: &str, text: &str) -> f64 {
@@ -137,6 +177,77 @@ impl BackendBridge {
             "sanitize" => {
                 let chunks_any = required_item(&payload, "chunks")?;
                 Ok(chunks_any.into_any().unbind())
+            }
+            "sse_generate_key" => Ok(generate_sse_key().into_pyobject(py)?.into_any().unbind()),
+            "sse_encrypt_terms" => {
+                let text: String = required_item(&payload, "text")?.extract()?;
+                let key: String = required_item(&payload, "key")?.extract()?;
+                let out = encrypt_terms(&text, &key);
+                Ok(PyList::new(py, out)?.into_any().unbind())
+            }
+            "sse_encrypt_structured_terms" => {
+                let text: String = required_item(&payload, "text")?.extract()?;
+                let key: String = required_item(&payload, "key")?.extract()?;
+                let use_bigrams: bool = payload
+                    .get_item("use_bigrams")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<bool>().ok())
+                    .unwrap_or(true);
+                let out = encrypt_structured_terms(&text, &key, use_bigrams);
+                Ok(PyList::new(py, out)?.into_any().unbind())
+            }
+            "sse_prepare_chunks" => {
+                let chunks_any = required_item(&payload, "chunks")?;
+                let chunks_list = chunks_any.downcast::<PyList>()?;
+                let key: String = required_item(&payload, "key")?.extract()?;
+                let scheme = payload
+                    .get_item("scheme")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<String>().ok())
+                    .unwrap_or_else(|| "sse".to_string())
+                    .to_ascii_lowercase();
+                let use_bigrams: bool = payload
+                    .get_item("use_bigrams")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<bool>().ok())
+                    .unwrap_or(true);
+
+                let out = PyList::empty(py);
+                for item in chunks_list.iter() {
+                    let row = item.downcast::<PyDict>()?;
+                    let text: String = row
+                        .get_item("text")?
+                        .ok_or_else(|| PyRuntimeError::new_err("missing text"))?
+                        .extract()?;
+
+                    let cloned = PyDict::new(py);
+                    for (k, v) in row.iter() {
+                        cloned.set_item(k, v)?;
+                    }
+
+                    match scheme.as_str() {
+                        "sse" => {
+                            let enc_terms = encrypt_terms(&text, &key);
+                            cloned.set_item("enc_terms", PyList::new(py, enc_terms)?)?;
+                        }
+                        "structured" | "structured_encryption" => {
+                            let struct_terms = encrypt_structured_terms(&text, &key, use_bigrams);
+                            cloned.set_item("struct_terms", PyList::new(py, struct_terms)?)?;
+                        }
+                        other => {
+                            return Err(PyRuntimeError::new_err(format!(
+                                "unknown encrypted search scheme: {}",
+                                other
+                            )));
+                        }
+                    }
+
+                    out.append(cloned)?;
+                }
+                Ok(out.into_any().unbind())
             }
             "build_index" => {
                 let protocol_s: String = required_item(&payload, "protocol")?.extract()?;

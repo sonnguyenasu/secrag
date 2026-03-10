@@ -4,6 +4,7 @@ import hashlib
 import math
 import random
 import re
+import secrets
 import uuid
 from typing import Any
 
@@ -98,6 +99,24 @@ def _retrieve_embedding(index: dict[str, Any], emb: list[float], top_k: int, que
     return scored[:top_k]
 
 
+def _encrypt_token(token: str, key: str) -> str:
+    digest = hashlib.sha256(f"{key}:{token}".encode("utf-8")).hexdigest()
+    return digest[:24]
+
+
+def _encrypt_terms(text: str, key: str) -> list[str]:
+    return [_encrypt_token(t, key) for t in _tokenize(text)]
+
+
+def _encrypt_structured_terms(text: str, key: str, use_bigrams: bool = True) -> list[str]:
+    tokens = _tokenize(text)
+    out = [_encrypt_token(f"tok:{t}", key) for t in tokens]
+    if use_bigrams and len(tokens) >= 2:
+        for i in range(len(tokens) - 1):
+            out.append(_encrypt_token(f"bi:{tokens[i]}_{tokens[i + 1]}", key))
+    return out
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -151,6 +170,48 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
                 for token in bad:
                     text = re.sub(re.escape(token), "", text, flags=re.IGNORECASE)
                 out.append({**c, "text": text})
+            return {"ok": True, "data": out}
+
+        if op == "sse_generate_key":
+            return {"ok": True, "data": secrets.token_hex(16)}
+
+        if op == "sse_encrypt_terms":
+            text = p["text"]
+            key = p["key"]
+            return {"ok": True, "data": _encrypt_terms(text, key)}
+
+        if op == "sse_encrypt_structured_terms":
+            text = p["text"]
+            key = p["key"]
+            use_bigrams = bool(p.get("use_bigrams", True))
+            return {
+                "ok": True,
+                "data": _encrypt_structured_terms(text, key, use_bigrams=use_bigrams),
+            }
+
+        if op == "sse_prepare_chunks":
+            chunks = p["chunks"]
+            key = p["key"]
+            scheme = str(p.get("scheme", "sse")).lower()
+            use_bigrams = bool(p.get("use_bigrams", True))
+            out = []
+            for c in chunks:
+                row = {**c}
+                text = row.get("text", "")
+                if scheme == "sse":
+                    row["enc_terms"] = _encrypt_terms(text, key)
+                elif scheme in {"structured", "structured_encryption"}:
+                    row["struct_terms"] = _encrypt_structured_terms(
+                        text,
+                        key,
+                        use_bigrams=use_bigrams,
+                    )
+                else:
+                    raise ValueError(
+                        f"Unknown encrypted search scheme for backend: {scheme}. "
+                        "Use 'sse' or 'structured'."
+                    )
+                out.append(row)
             return {"ok": True, "data": out}
 
         if op == "build_index":
