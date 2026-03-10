@@ -418,9 +418,12 @@ impl BackendBridge {
                 let query: String = required_item(&payload, "query")?.extract()?;
                 let sigma: f64 = required_item(&payload, "sigma")?.extract()?;
                 let base = embed(&query, 64);
-                let seed = query
-                    .bytes()
-                    .fold(0u64, |acc, b| acc.wrapping_mul(131).wrapping_add(b as u64));
+                let digest = Sha256::digest(query.as_bytes());
+                let seed = u64::from_le_bytes(
+                    digest[..8]
+                        .try_into()
+                        .map_err(|_| PyRuntimeError::new_err("invalid seed bytes"))?,
+                );
                 let mut rng = StdRng::seed_from_u64(seed);
                 let normal = Normal::new(0.0, sigma)
                     .map_err(|e| PyRuntimeError::new_err(format!("invalid sigma: {e}")))?;

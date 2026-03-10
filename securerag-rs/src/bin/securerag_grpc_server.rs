@@ -37,11 +37,14 @@ struct Index {
     _protocol: String,
     dp_budget: Option<RDPAccountant>,
     chunks: Vec<Row>,
+    scheme: Option<String>,
+    encrypted_search_version: String,
     scheme_index: Option<Box<dyn SchemeIndex>>,
 }
 
 const LEXICAL_WEIGHT: f64 = 0.65;
 const EMBEDDING_WEIGHT: f64 = 0.35;
+const ENCRYPTED_SEARCH_VERSION: &str = "hmac-sha256-v1";
 
 static INDEXES: Lazy<Arc<Mutex<HashMap<String, Index>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
@@ -274,12 +277,24 @@ impl SecureRetrieval for SecureRetrievalSvc {
                 .map(|r| SchemeRow {
                     doc_id: r.doc_id.clone(),
                     text: r.text.clone(),
+                    metadata: r.metadata.clone(),
                     scheme_data: r.scheme_data.clone(),
                 })
                 .collect();
             Some(scheme.build_index(&scheme_rows))
         } else {
             None
+        };
+
+        let scheme_name = if req.protocol == "EncryptedSearch" {
+            Some(req.encrypted_search_scheme.to_ascii_lowercase())
+        } else {
+            None
+        };
+        let encrypted_search_version = if req.encrypted_search_version.is_empty() {
+            "sha256-v0".to_string()
+        } else {
+            req.encrypted_search_version.clone()
         };
 
         let index_id = format!("rsgrpc-{}", uuid::Uuid::new_v4());
@@ -296,6 +311,8 @@ impl SecureRetrieval for SecureRetrievalSvc {
                 _protocol: req.protocol,
                 dp_budget,
                 chunks: rows,
+                scheme: scheme_name,
+                encrypted_search_version,
                 scheme_index,
             },
         );
@@ -353,10 +370,12 @@ impl SecureRetrieval for SecureRetrievalSvc {
     async fn embed_with_noise(&self, request: Request<EmbedWithNoiseRequest>) -> Result<Response<EmbedWithNoiseResponse>, Status> {
         let req = request.into_inner();
         let base = embed(&req.query, 64);
-        let seed = req
-            .query
-            .bytes()
-            .fold(0u64, |acc, b| acc.wrapping_mul(131).wrapping_add(b as u64));
+        let digest = Sha256::digest(req.query.as_bytes());
+        let seed = u64::from_le_bytes(
+            digest[..8]
+                .try_into()
+                .map_err(|_| Status::internal("invalid seed bytes"))?,
+        );
         let mut rng = StdRng::seed_from_u64(seed);
         let normal = Normal::new(0.0, req.sigma).map_err(|e| Status::invalid_argument(format!("invalid sigma: {e}")))?;
         let out = base.into_iter().map(|v| v + normal.sample(&mut rng)).collect();
@@ -423,6 +442,14 @@ impl SecureRetrieval for SecureRetrievalSvc {
             .as_ref()
             .ok_or_else(|| Status::failed_precondition("index was not built with an encrypted scheme"))?;
 
+        if index.scheme.is_some() && index.encrypted_search_version != ENCRYPTED_SEARCH_VERSION {
+            return Err(Status::failed_precondition(format!(
+                "Index built with crypto version '{}' is incompatible with current '{}'. Rebuild the corpus.",
+                index.encrypted_search_version,
+                ENCRYPTED_SEARCH_VERSION
+            )));
+        }
+
         let encrypted_query = req
             .encrypted_query
             .as_ref()
@@ -436,7 +463,7 @@ impl SecureRetrieval for SecureRetrievalSvc {
                 row_to_struct(
                     &r.doc_id,
                     &r.text,
-                    Struct { fields: BTreeMap::new() },
+                    r.metadata,
                     r.score,
                 )
             })

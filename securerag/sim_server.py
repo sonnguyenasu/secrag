@@ -52,6 +52,11 @@ def _embed(text: str, dim: int = 64) -> list[float]:
     return [v / norm for v in vec]
 
 
+def _noise_seed(query: str) -> int:
+    digest = hashlib.sha256(query.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "little")
+
+
 def _cos(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
@@ -166,7 +171,7 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
             delta = float(p.get("delta", 1e-5))
             chunks = p["chunks"]
             scheme = p.get("encrypted_search_scheme")
-            scheme_version = p.get("encrypted_search_version") or ENCRYPTED_SEARCH_VERSION
+            scheme_version = p.get("encrypted_search_version") or "sha256-v0"
 
             rows = []
             for c in chunks:
@@ -251,7 +256,7 @@ def rpc(req: RPCRequest) -> dict[str, Any]:
             query = p["query"]
             sigma = float(p["sigma"])
             emb = _embed(query)
-            rnd = random.Random(hash(query) & 0xFFFF)
+            rnd = random.Random(_noise_seed(query))
             noised = [v + rnd.gauss(0.0, sigma) for v in emb]
             return {"ok": True, "data": noised}
 

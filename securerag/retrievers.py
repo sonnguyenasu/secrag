@@ -1,5 +1,3 @@
-import math
-
 from securerag.errors import UnsupportedCapabilityError
 from securerag.protocol import PrivacyProtocol
 from securerag.retriever import PrivacyRetriever
@@ -51,9 +49,17 @@ class ObfuscationRetriever(PrivacyRetriever):
 @PrivacyRetriever.register(PrivacyProtocol.DIFF_PRIVACY)
 class DiffPrivacyRetriever(PrivacyRetriever):
     def retrieve(self, query: str, round_n: int):
-        eps = self.privacy_cost(query)
-        self.budget.consume(eps)
-        noised = self._backend.embed_with_noise(query=query, sigma=self.config.noise_std)
+        sigma = float(self.config.noise_std)
+        eps = self.budget.incremental_cost(sigma)
+        noised = self._backend.embed_with_noise(query=query, sigma=sigma)
+        rows = self._backend.retrieve_by_embedding(
+            index_id=self.corpus.index_id,
+            embedding=noised,
+            top_k=self.config.top_k,
+            query=query,
+            sigma=sigma,
+        )
+        self.budget.consume(sigma)
         self._debug(
             "diff-privacy retrieval",
             round_n=round_n,
@@ -62,21 +68,10 @@ class DiffPrivacyRetriever(PrivacyRetriever):
             epsilon_cost=eps,
             epsilon_remaining=self.budget.remaining,
         )
-        rows = self._backend.retrieve_by_embedding(
-            index_id=self.corpus.index_id,
-            embedding=noised,
-            top_k=self.config.top_k,
-            query=query,
-            sigma=self.config.noise_std,
-        )
         return self._to_docs(rows)
 
     def privacy_cost(self, query: str) -> float:
-        sigma = self.config.noise_std
-        delta = self.config.delta
-        orders = [2.0, 4.0, 8.0, 16.0, 32.0]
-        rdp_eps = [alpha / (2.0 * sigma**2) for alpha in orders]
-        return min(r + math.log(1.0 / delta) / (a - 1.0) for a, r in zip(orders, rdp_eps))
+        return self.budget.incremental_cost(float(self.config.noise_std))
 
 
 @PrivacyRetriever.register(PrivacyProtocol.ENCRYPTED_SEARCH)

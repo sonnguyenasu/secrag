@@ -7,6 +7,7 @@ import re
 
 from securerag.backend_client import create_backend
 from securerag.builtin_schemes import StructuredPlugin
+from securerag.config import PrivacyConfig
 from securerag.models import CorpusMeta, RawDocument
 from securerag.protocol import PrivacyProtocol
 from securerag.scheme_plugin import EncryptedSchemePlugin
@@ -80,7 +81,12 @@ class PIRDatabase(SecureCorpus):
 
 
 class CorpusBuilder:
-    def __init__(self, protocol: PrivacyProtocol, backend_url: str = "http://127.0.0.1:8099"):
+    def __init__(
+        self,
+        protocol: PrivacyProtocol,
+        backend_url: str = "http://127.0.0.1:8099",
+        config: PrivacyConfig | None = None,
+    ):
         self._protocol = protocol
         self._docs: list[RawDocument] = []
         self._chunk_size = 512
@@ -91,6 +97,22 @@ class CorpusBuilder:
         self._structured_use_bigrams = True
         self._epsilon = 1_000_000.0
         self._delta = 1e-5
+        if config is not None and protocol.requires_budget:
+            self._epsilon = float(config.epsilon)
+            self._delta = float(config.delta)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: PrivacyConfig,
+        *,
+        backend_url: str | None = None,
+    ) -> "CorpusBuilder":
+        return cls(
+            protocol=config.protocol,
+            backend_url=backend_url or config.backend,
+            config=config,
+        )
 
     def with_chunk_size(self, n: int) -> "CorpusBuilder":
         self._chunk_size = n

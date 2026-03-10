@@ -39,6 +39,7 @@ message BuildIndexRequest {
   double epsilon = 3;
   double delta = 4;
   string encrypted_search_scheme = 5;
+  string encrypted_search_version = 6;
 }
 
 message BuildIndexResponse {

@@ -290,11 +290,13 @@ def test_encrypted_search_http_and_rust_local_parity() -> None:
             "EncryptedSearch",
             chunks,
             encrypted_search_scheme="sse",
+            encrypted_search_version="hmac-sha256-v1",
         )
         rust_idx = rust_backend.build_index(
             "EncryptedSearch",
             chunks,
             encrypted_search_scheme="sse",
+            encrypted_search_version="hmac-sha256-v1",
         )
 
         encrypted_query = plugin.encrypt_query("q3 risk vendor concentration", fixed_key)
@@ -318,6 +320,8 @@ def test_encrypted_search_http_and_rust_local_parity() -> None:
 
 
 def test_encrypted_search_grpc_path_if_server_available() -> None:
+    pytest.importorskip("grpc")
+
     root = Path(__file__).resolve().parents[1]
     grpc_bin = root / "securerag-rs" / "target" / "debug" / "securerag_grpc_server"
     if not grpc_bin.exists():
@@ -353,6 +357,7 @@ def test_encrypted_search_grpc_path_if_server_available() -> None:
             "EncryptedSearch",
             chunks,
             encrypted_search_scheme="sse",
+            encrypted_search_version="hmac-sha256-v1",
         )
         try:
             rows = backend.encrypted_search(
@@ -366,6 +371,19 @@ def test_encrypted_search_grpc_path_if_server_available() -> None:
             raise
         assert rows
         assert rows[0]["doc_id"] == "q3"
+
+        legacy_idx = backend.build_index(
+            "EncryptedSearch",
+            chunks,
+            encrypted_search_scheme="sse",
+            encrypted_search_version="sha256-v0",
+        )
+        with pytest.raises(BackendError, match="incompatible"):
+            backend.encrypted_search(
+                legacy_idx["index_id"],
+                plugin.encrypt_query("q3 risk vendor concentration", fixed_key),
+                3,
+            )
     finally:
         proc.terminate()
         try:

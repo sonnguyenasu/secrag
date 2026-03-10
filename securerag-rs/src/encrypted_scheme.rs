@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
+use prost_types::Struct;
+
 pub struct SearchResult {
     pub doc_id: String,
     pub text: String,
+    pub metadata: Struct,
     pub score: f64,
 }
 
@@ -21,5 +24,6 @@ pub trait SchemeIndex: Send + Sync {
 pub struct SchemeRow {
     pub doc_id: String,
     pub text: String,
+    pub metadata: Struct,
     pub scheme_data: HashMap<String, serde_json::Value>,
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from securerag.config import PrivacyConfig
-from securerag.errors import BudgetExhaustedError
+from securerag.errors import BackendError, BudgetExhaustedError
 from securerag.retriever import PrivacyRetriever
 
 
@@ -49,6 +49,10 @@ class SecureRAGAgent:
                 new_docs = self.retriever.retrieve(sub_query, round_n)
             except BudgetExhaustedError:
                 break
+            except BackendError as exc:
+                if "budget exhausted" in str(exc).lower():
+                    break
+                raise
 
             context = self._merge_and_rank(context, self._dedup(new_docs, context))
 

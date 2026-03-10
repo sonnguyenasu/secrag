@@ -208,6 +208,7 @@ class GrpcBackend(Backend):
             epsilon=epsilon,
             delta=delta,
             encrypted_search_scheme=encrypted_search_scheme,
+            encrypted_search_version=encrypted_search_version,
         )
         resp = self._invoke("BuildIndex", req)
         return {"index_id": str(resp.index_id), "doc_count": int(resp.doc_count)}

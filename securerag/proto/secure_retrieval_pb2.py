@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&securerag/proto/secure_retrieval.proto\x12\tsecurerag\x1a\x1cgoogle/protobuf/struct.proto\"Z\n\x0c\x43hunkRequest\x12%\n\x04\x64ocs\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\x12\x12\n\nchunk_size\x18\x02 \x01(\x05\x12\x0f\n\x07overlap\x18\x03 \x01(\x05\"8\n\rChunkResponse\x12\'\n\x06\x63hunks\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\":\n\x0fSanitizeRequest\x12\'\n\x06\x63hunks\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\";\n\x10SanitizeResponse\x12\'\n\x06\x63hunks\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\"\x8f\x01\n\x11\x42uildIndexRequest\x12\x10\n\x08protocol\x18\x01 \x01(\t\x12\'\n\x06\x63hunks\x18\x02 \x03(\x0b\x32\x17.google.protobuf.Struct\x12\x0f\n\x07\x65psilon\x18\x03 \x01(\x01\x12\r\n\x05\x64\x65lta\x18\x04 \x01(\x01\x12\x1f\n\x17\x65ncrypted_search_scheme\x18\x05 \x01(\t\"9\n\x12\x42uildIndexResponse\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x11\n\tdoc_count\x18\x02 \x01(\x05\"C\n\x15GenerateDecoysRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\r\n\x05query\x18\x02 \x01(\t\x12\t\n\x01k\x18\x03 \x01(\x05\"(\n\x16GenerateDecoysResponse\x12\x0e\n\x06\x64\x65\x63oys\x18\x01 \x03(\t\"H\n\x14\x42\x61tchRetrieveRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x0f\n\x07queries\x18\x02 \x03(\t\x12\r\n\x05top_k\x18\x03 \x01(\x05\"?\n\x15\x42\x61tchRetrieveResponse\x12&\n\x04rows\x18\x01 \x03(\x0b\x32\x18.securerag.RetrievalList\"5\n\x15\x45mbedWithNoiseRequest\x12\r\n\x05query\x18\x01 \x01(\t\x12\r\n\x05sigma\x18\x02 \x01(\x01\"+\n\x16\x45mbedWithNoiseResponse\x12\x11\n\tembedding\x18\x01 \x03(\x01\"n\n\x1aRetrieveByEmbeddingRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x11\n\tembedding\x18\x02 \x03(\x01\x12\r\n\x05top_k\x18\x03 \x01(\x05\x12\r\n\x05query\x18\x04 \x01(\t\x12\r\n\x05sigma\x18\x05 \x01(\x01\"D\n\x1bRetrieveByEmbeddingResponse\x12%\n\x04rows\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\"k\n\x16\x45ncryptedSearchRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x30\n\x0f\x65ncrypted_query\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\r\n\x05top_k\x18\x03 \x01(\x05\"@\n\x17\x45ncryptedSearchResponse\x12%\n\x04rows\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\"6\n\rRetrievalList\x12%\n\x04rows\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct2\x9f\x05\n\x0fSecureRetrieval\x12:\n\x05\x43hunk\x12\x17.securerag.ChunkRequest\x1a\x18.securerag.ChunkResponse\x12\x43\n\x08Sanitize\x12\x1a.securerag.SanitizeRequest\x1a\x1b.securerag.SanitizeResponse\x12I\n\nBuildIndex\x12\x1c.securerag.BuildIndexRequest\x1a\x1d.securerag.BuildIndexResponse\x12U\n\x0eGenerateDecoys\x12 .securerag.GenerateDecoysRequest\x1a!.securerag.GenerateDecoysResponse\x12R\n\rBatchRetrieve\x12\x1f.securerag.BatchRetrieveRequest\x1a .securerag.BatchRetrieveResponse\x12U\n\x0e\x45mbedWithNoise\x12 .securerag.EmbedWithNoiseRequest\x1a!.securerag.EmbedWithNoiseResponse\x12\x64\n\x13RetrieveByEmbedding\x12%.securerag.RetrieveByEmbeddingRequest\x1a&.securerag.RetrieveByEmbeddingResponse\x12X\n\x0f\x45ncryptedSearch\x12!.securerag.EncryptedSearchRequest\x1a\".securerag.EncryptedSearchResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&securerag/proto/secure_retrieval.proto\x12\tsecurerag\x1a\x1cgoogle/protobuf/struct.proto\"Z\n\x0c\x43hunkRequest\x12%\n\x04\x64ocs\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\x12\x12\n\nchunk_size\x18\x02 \x01(\x05\x12\x0f\n\x07overlap\x18\x03 \x01(\x05\"8\n\rChunkResponse\x12\'\n\x06\x63hunks\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\":\n\x0fSanitizeRequest\x12\'\n\x06\x63hunks\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\";\n\x10SanitizeResponse\x12\'\n\x06\x63hunks\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\"\xb1\x01\n\x11\x42uildIndexRequest\x12\x10\n\x08protocol\x18\x01 \x01(\t\x12\'\n\x06\x63hunks\x18\x02 \x03(\x0b\x32\x17.google.protobuf.Struct\x12\x0f\n\x07\x65psilon\x18\x03 \x01(\x01\x12\r\n\x05\x64\x65lta\x18\x04 \x01(\x01\x12\x1f\n\x17\x65ncrypted_search_scheme\x18\x05 \x01(\t\x12 \n\x18\x65ncrypted_search_version\x18\x06 \x01(\t\"9\n\x12\x42uildIndexResponse\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x11\n\tdoc_count\x18\x02 \x01(\x05\"C\n\x15GenerateDecoysRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\r\n\x05query\x18\x02 \x01(\t\x12\t\n\x01k\x18\x03 \x01(\x05\"(\n\x16GenerateDecoysResponse\x12\x0e\n\x06\x64\x65\x63oys\x18\x01 \x03(\t\"H\n\x14\x42\x61tchRetrieveRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x0f\n\x07queries\x18\x02 \x03(\t\x12\r\n\x05top_k\x18\x03 \x01(\x05\"?\n\x15\x42\x61tchRetrieveResponse\x12&\n\x04rows\x18\x01 \x03(\x0b\x32\x18.securerag.RetrievalList\"5\n\x15\x45mbedWithNoiseRequest\x12\r\n\x05query\x18\x01 \x01(\t\x12\r\n\x05sigma\x18\x02 \x01(\x01\"+\n\x16\x45mbedWithNoiseResponse\x12\x11\n\tembedding\x18\x01 \x03(\x01\"n\n\x1aRetrieveByEmbeddingRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x11\n\tembedding\x18\x02 \x03(\x01\x12\r\n\x05top_k\x18\x03 \x01(\x05\x12\r\n\x05query\x18\x04 \x01(\t\x12\r\n\x05sigma\x18\x05 \x01(\x01\"D\n\x1bRetrieveByEmbeddingResponse\x12%\n\x04rows\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\"k\n\x16\x45ncryptedSearchRequest\x12\x10\n\x08index_id\x18\x01 \x01(\t\x12\x30\n\x0f\x65ncrypted_query\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\r\n\x05top_k\x18\x03 \x01(\x05\"@\n\x17\x45ncryptedSearchResponse\x12%\n\x04rows\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\"6\n\rRetrievalList\x12%\n\x04rows\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct2\x9f\x05\n\x0fSecureRetrieval\x12:\n\x05\x43hunk\x12\x17.securerag.ChunkRequest\x1a\x18.securerag.ChunkResponse\x12\x43\n\x08Sanitize\x12\x1a.securerag.SanitizeRequest\x1a\x1b.securerag.SanitizeResponse\x12I\n\nBuildIndex\x12\x1c.securerag.BuildIndexRequest\x1a\x1d.securerag.BuildIndexResponse\x12U\n\x0eGenerateDecoys\x12 .securerag.GenerateDecoysRequest\x1a!.securerag.GenerateDecoysResponse\x12R\n\rBatchRetrieve\x12\x1f.securerag.BatchRetrieveRequest\x1a .securerag.BatchRetrieveResponse\x12U\n\x0e\x45mbedWithNoise\x12 .securerag.EmbedWithNoiseRequest\x1a!.securerag.EmbedWithNoiseResponse\x12\x64\n\x13RetrieveByEmbedding\x12%.securerag.RetrieveByEmbeddingRequest\x1a&.securerag.RetrieveByEmbeddingResponse\x12X\n\x0f\x45ncryptedSearch\x12!.securerag.EncryptedSearchRequest\x1a\".securerag.EncryptedSearchResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -41,31 +41,31 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_SANITIZERESPONSE']._serialized_start=293
   _globals['_SANITIZERESPONSE']._serialized_end=352
   _globals['_BUILDINDEXREQUEST']._serialized_start=355
-  _globals['_BUILDINDEXREQUEST']._serialized_end=498
-  _globals['_BUILDINDEXRESPONSE']._serialized_start=500
-  _globals['_BUILDINDEXRESPONSE']._serialized_end=557
-  _globals['_GENERATEDECOYSREQUEST']._serialized_start=559
-  _globals['_GENERATEDECOYSREQUEST']._serialized_end=626
-  _globals['_GENERATEDECOYSRESPONSE']._serialized_start=628
-  _globals['_GENERATEDECOYSRESPONSE']._serialized_end=668
-  _globals['_BATCHRETRIEVEREQUEST']._serialized_start=670
-  _globals['_BATCHRETRIEVEREQUEST']._serialized_end=742
-  _globals['_BATCHRETRIEVERESPONSE']._serialized_start=744
-  _globals['_BATCHRETRIEVERESPONSE']._serialized_end=807
-  _globals['_EMBEDWITHNOISEREQUEST']._serialized_start=809
-  _globals['_EMBEDWITHNOISEREQUEST']._serialized_end=862
-  _globals['_EMBEDWITHNOISERESPONSE']._serialized_start=864
-  _globals['_EMBEDWITHNOISERESPONSE']._serialized_end=907
-  _globals['_RETRIEVEBYEMBEDDINGREQUEST']._serialized_start=909
-  _globals['_RETRIEVEBYEMBEDDINGREQUEST']._serialized_end=1019
-  _globals['_RETRIEVEBYEMBEDDINGRESPONSE']._serialized_start=1021
-  _globals['_RETRIEVEBYEMBEDDINGRESPONSE']._serialized_end=1089
-  _globals['_ENCRYPTEDSEARCHREQUEST']._serialized_start=1091
-  _globals['_ENCRYPTEDSEARCHREQUEST']._serialized_end=1198
-  _globals['_ENCRYPTEDSEARCHRESPONSE']._serialized_start=1200
-  _globals['_ENCRYPTEDSEARCHRESPONSE']._serialized_end=1264
-  _globals['_RETRIEVALLIST']._serialized_start=1266
-  _globals['_RETRIEVALLIST']._serialized_end=1320
-  _globals['_SECURERETRIEVAL']._serialized_start=1323
-  _globals['_SECURERETRIEVAL']._serialized_end=1994
+  _globals['_BUILDINDEXREQUEST']._serialized_end=532
+  _globals['_BUILDINDEXRESPONSE']._serialized_start=534
+  _globals['_BUILDINDEXRESPONSE']._serialized_end=591
+  _globals['_GENERATEDECOYSREQUEST']._serialized_start=593
+  _globals['_GENERATEDECOYSREQUEST']._serialized_end=660
+  _globals['_GENERATEDECOYSRESPONSE']._serialized_start=662
+  _globals['_GENERATEDECOYSRESPONSE']._serialized_end=702
+  _globals['_BATCHRETRIEVEREQUEST']._serialized_start=704
+  _globals['_BATCHRETRIEVEREQUEST']._serialized_end=776
+  _globals['_BATCHRETRIEVERESPONSE']._serialized_start=778
+  _globals['_BATCHRETRIEVERESPONSE']._serialized_end=841
+  _globals['_EMBEDWITHNOISEREQUEST']._serialized_start=843
+  _globals['_EMBEDWITHNOISEREQUEST']._serialized_end=896
+  _globals['_EMBEDWITHNOISERESPONSE']._serialized_start=898
+  _globals['_EMBEDWITHNOISERESPONSE']._serialized_end=941
+  _globals['_RETRIEVEBYEMBEDDINGREQUEST']._serialized_start=943
+  _globals['_RETRIEVEBYEMBEDDINGREQUEST']._serialized_end=1053
+  _globals['_RETRIEVEBYEMBEDDINGRESPONSE']._serialized_start=1055
+  _globals['_RETRIEVEBYEMBEDDINGRESPONSE']._serialized_end=1123
+  _globals['_ENCRYPTEDSEARCHREQUEST']._serialized_start=1125
+  _globals['_ENCRYPTEDSEARCHREQUEST']._serialized_end=1232
+  _globals['_ENCRYPTEDSEARCHRESPONSE']._serialized_start=1234
+  _globals['_ENCRYPTEDSEARCHRESPONSE']._serialized_end=1298
+  _globals['_RETRIEVALLIST']._serialized_start=1300
+  _globals['_RETRIEVALLIST']._serialized_end=1354
+  _globals['_SECURERETRIEVAL']._serialized_start=1357
+  _globals['_SECURERETRIEVAL']._serialized_end=2028
 # @@protoc_insertion_point(module_scope)

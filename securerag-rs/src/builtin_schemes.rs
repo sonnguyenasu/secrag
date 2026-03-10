@@ -14,14 +14,15 @@ pub struct RustStructuredScheme {
 }
 
 struct InvertedIndex {
-    rows: Vec<(String, String, Vec<String>)>,
+    rows: Vec<(String, String, prost_types::Struct, Vec<String>)>,
     inv: HashMap<String, Vec<usize>>,
     query_field: &'static str,
 }
 
 impl InvertedIndex {
     fn build(rows: &[SchemeRow], field: &'static str, query_field: &'static str) -> Self {
-        let mut packed_rows: Vec<(String, String, Vec<String>)> = Vec::with_capacity(rows.len());
+        let mut packed_rows: Vec<(String, String, prost_types::Struct, Vec<String>)> =
+            Vec::with_capacity(rows.len());
         let mut inv: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, row) in rows.iter().enumerate() {
             let terms = row
@@ -37,7 +38,12 @@ impl InvertedIndex {
             for term in &terms {
                 inv.entry(term.clone()).or_default().push(i);
             }
-            packed_rows.push((row.doc_id.clone(), row.text.clone(), terms));
+            packed_rows.push((
+                row.doc_id.clone(),
+                row.text.clone(),
+                row.metadata.clone(),
+                terms,
+            ));
         }
         Self {
             rows: packed_rows,
@@ -80,7 +86,7 @@ impl SchemeIndex for InvertedIndex {
             .into_iter()
             .map(|(idx, inter)| {
                 let row = &self.rows[idx];
-                let union = q_len + row.2.len() - inter;
+                let union = q_len + row.3.len() - inter;
                 let score = if union == 0 {
                     0.0
                 } else {
@@ -89,6 +95,7 @@ impl SchemeIndex for InvertedIndex {
                 SearchResult {
                     doc_id: row.0.clone(),
                     text: row.1.clone(),
+                    metadata: row.2.clone(),
                     score,
                 }
             })
