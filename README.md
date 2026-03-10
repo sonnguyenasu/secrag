@@ -1,10 +1,31 @@
-# SecureRAG MVP (Pseudo-Remote)
+# SecureRAG Framework (Research Prototype)
 
-This repository implements a runnable MVP of the SecureRAG API design using a pseudo-remote backend service on localhost.
+SecureRAG is a protocol-driven retrieval augmented generation framework focused on privacy-aware retrieval.
 
-In addition to HTTP, the remote backend now supports a gRPC + Protobuf service endpoint.
+This repository provides:
 
-It also includes a Rust backend crate (`securerag-rs`) with a PyO3 bridge that can be selected via `backend="rust://local"` after building the extension.
+- A Python orchestration layer for corpus construction, retrieval routing, budget accounting, and LLM interaction.
+- Multiple backend transports: HTTP RPC, strict gRPC + Protobuf service, and an in-process Rust bridge (`rust://local`).
+- Protocol-specific retrieval behavior for baseline retrieval, traffic obfuscation, differential privacy, and encrypted search.
+
+The goal of this implementation is to mirror the framework API shape while remaining runnable for local experiments.
+
+## Framework model
+
+At a high level, the system is organized into four layers:
+
+1. Policy layer: `PrivacyConfig`, `PrivacyProtocol`, and budget controls define privacy and runtime behavior.
+2. Data layer: `CorpusBuilder` builds protocol-aware corpora (`SSECorpus`, `EmbeddingCorpus`, `PIRDatabase`, or `GenericCorpus`).
+3. Retrieval layer: `PrivacyRetriever` selects a retriever implementation based on protocol.
+4. Agent layer: `SecureRAGAgent` runs multi-round retrieve-then-generate with model-provider abstraction (`ModelAgentLLM`).
+
+Execution flow:
+
+1. Configure protocol and backend.
+2. Build corpus and backend index.
+3. Instantiate `SecureRAGAgent` with selected LLM provider.
+4. Run iterative retrieval rounds until answer condition is met.
+5. Return answer plus context and budget telemetry.
 
 ## What is implemented
 
@@ -20,7 +41,22 @@ It also includes a Rust backend crate (`securerag-rs`) with a PyO3 bridge that c
   - `ENCRYPTED_SEARCH`
   - `PIR`
 - `SecureRAGAgent` multi-round orchestration
-- Pseudo-remote backend server (`FastAPI`) reachable on localhost
+- Typed corpora:
+  - `SSECorpus`
+  - `EmbeddingCorpus`
+  - `PIRDatabase`
+- Backend transports:
+  - HTTP pseudo-remote (`FastAPI`)
+  - strict gRPC + Protobuf service (`SecureRetrieval`)
+  - Rust local bridge (`rust://local`)
+
+## Repository layout
+
+- `securerag/`: Python framework code (agent, config, retrievers, corpus, backends, gRPC server)
+- `securerag/proto/`: Protobuf contract and generated gRPC stubs
+- `securerag-rs/`: Rust crate with retrieval engines, builders, and PyO3 bridge
+- `examples/`: runnable usage patterns
+- `tests/`: parity and behavior tests
 
 ## Quickstart
 
@@ -36,6 +72,8 @@ In another terminal:
 ```bash
 python examples/quickstart.py
 ```
+
+`examples/quickstart.py` is the primary end-to-end reference and supports env-based backend/provider switching.
 
 ## Rust backend (PyO3)
 
@@ -78,6 +116,12 @@ config = PrivacyConfig(
 )
 ```
 
+The gRPC surface is strict and typed. The `SecureRetrieval` service exposes explicit methods for each operation (`Chunk`, `BuildIndex`, `BatchRetrieve`, `SseEncryptTerms`, `SseSearch`, etc.) rather than a generic string-dispatched RPC envelope.
+
+Proto file:
+
+- `securerag/proto/secure_retrieval.proto`
+
 ## Provider-agnostic LLM agent
 
 The agent is framework/provider-agnostic and supports both Ollama and Hugging Face backends through one interface:
@@ -96,3 +140,18 @@ Quickstart environment variables:
 - `HF_INFERENCE_BASE_URL=https://api-inference.huggingface.co`
 
 If remote model calls are disabled or unavailable, deterministic local fallback remains active.
+
+## Example scripts
+
+- `examples/quickstart.py`
+  - End-to-end encrypted-search run with configurable backend and model provider.
+- `examples/grpc_quickstart.py`
+  - End-to-end run against strict gRPC backend (`grpc://127.0.0.1:50051`).
+- `examples/protocol_walkthrough.py`
+  - Runs multiple protocols and shows resulting corpus type, answer, and budget snapshot.
+
+## Notes and current boundaries
+
+- This codebase is intended for research prototyping and API validation.
+- `PIR` remains contract-complete but intentionally unimplemented as a retrieval algorithm in this repository.
+- For tests that use default HTTP backend values, start `securerag.sim_server` (or use the provided test command patterns that launch it temporarily).
