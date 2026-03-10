@@ -3,6 +3,7 @@ import subprocess
 import sys
 import time
 import logging
+from pathlib import Path
 
 import httpx
 import pytest
@@ -148,6 +149,17 @@ def _wait_for_health(base_url: str, timeout_s: float = 8.0) -> None:
         except Exception:
             time.sleep(0.1)
     raise RuntimeError(f"timed out waiting for backend health at {base_url}")
+
+
+def _wait_for_tcp(host: str, port: int, timeout_s: float = 12.0) -> None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError(f"timed out waiting for TCP endpoint at {host}:{port}")
 
 
 def _run_top1(
@@ -304,6 +316,10 @@ def test_sse_crypto_ops_parity_http_vs_rust():
 def test_top1_retrieval_parity_http_vs_grpc_baseline():
     pytest.importorskip("grpc")
 
+    root = Path(__file__).resolve().parents[1]
+    rust_manifest = root / "securerag-rs" / "Cargo.toml"
+    rust_grpc_bin = root / "securerag-rs" / "target" / "debug" / "securerag_grpc_server"
+
     http_port = _free_port()
     grpc_port = _free_port()
     http_url = f"http://127.0.0.1:{http_port}"
@@ -323,23 +339,38 @@ def test_top1_retrieval_parity_http_vs_grpc_baseline():
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+    subprocess.run(
+        [
+            "cargo",
+            "build",
+            "--manifest-path",
+            str(rust_manifest),
+            "--bin",
+            "securerag_grpc_server",
+        ],
+        check=True,
+        cwd=str(root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
     grpc_proc = subprocess.Popen(
         [
-            sys.executable,
-            "-m",
-            "securerag.grpc_server",
+            str(rust_grpc_bin),
             "--host",
             "127.0.0.1",
             "--port",
             str(grpc_port),
         ],
+        cwd=str(root),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
     try:
         _wait_for_health(http_url)
-        time.sleep(0.8)
+        _wait_for_tcp("127.0.0.1", grpc_port)
 
         docs = [
             RawDocument(doc_id="q3", text="Q3 risk report highlights vendor concentration and delayed remediation."),

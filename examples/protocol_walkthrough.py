@@ -46,7 +46,7 @@ def run_protocol(protocol: PrivacyProtocol, backend: str, query: str) -> None:
     print("protocol:", protocol.name)
     print("backend:", backend)
     print("corpus type:", type(corpus).__name__)
-    print("answer:", result.answer.splitlines()[0])
+    print("answer:", result.answer)
     print("budget:", agent.budget_snapshot())
 
 

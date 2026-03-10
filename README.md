@@ -52,9 +52,9 @@ Execution flow:
 
 ## Repository layout
 
-- `securerag/`: Python framework code (agent, config, retrievers, corpus, backends, gRPC server)
+- `securerag/`: Python framework code (agent, config, retrievers, corpus, backends, gRPC client)
 - `securerag/proto/`: Protobuf contract and generated gRPC stubs
-- `securerag-rs/`: Rust crate with retrieval engines, builders, and PyO3 bridge
+- `securerag-rs/`: Rust crate with retrieval engines, builders, PyO3 bridge, and native gRPC server binary
 - `examples/`: runnable usage patterns
 - `tests/`: parity and behavior tests
 
@@ -100,11 +100,12 @@ If the extension is unavailable, the framework raises a clear error and you can 
 
 ## gRPC backend (Protobuf)
 
-Start the gRPC server:
+Start the Rust-native gRPC server:
 
 ```bash
 source .venv/bin/activate
-python -m securerag.grpc_server --host 127.0.0.1 --port 50051
+cargo build --manifest-path securerag-rs/Cargo.toml --bin securerag_grpc_server
+./securerag-rs/target/debug/securerag_grpc_server --host 127.0.0.1 --port 50051
 ```
 
 Then configure backend:
@@ -121,6 +122,10 @@ The gRPC surface is strict and typed. The `SecureRetrieval` service exposes expl
 Proto file:
 
 - `securerag/proto/secure_retrieval.proto`
+
+Rust server entrypoint:
+
+- `securerag-rs/src/bin/securerag_grpc_server.rs`
 
 ## Provider-agnostic LLM agent
 
@@ -146,7 +151,7 @@ If remote model calls are disabled or unavailable, deterministic local fallback 
 - `examples/quickstart.py`
   - End-to-end encrypted-search run with configurable backend and model provider.
 - `examples/grpc_quickstart.py`
-  - End-to-end run against strict gRPC backend (`grpc://127.0.0.1:50051`).
+  - End-to-end run against strict gRPC backend (`grpc://127.0.0.1:50051`) served by the Rust binary.
 - `examples/protocol_walkthrough.py`
   - Runs multiple protocols and shows resulting corpus type, answer, and budget snapshot.
 

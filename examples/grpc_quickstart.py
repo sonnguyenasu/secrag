@@ -7,6 +7,8 @@ from securerag.models import RawDocument
 
 
 def main() -> None:
+    # Start Rust gRPC server first:
+    # ./securerag-rs/target/debug/securerag_grpc_server --host 127.0.0.1 --port 50051
     docs = [
         RawDocument(doc_id="q3", text="Q3 risk report highlights vendor concentration and delayed remediation."),
         RawDocument(doc_id="policy", text="Security policy requires quarterly risk treatment tracking and owner assignment."),
@@ -21,8 +23,7 @@ def main() -> None:
         top_k=3,
         max_rounds=4,
         encrypted_search_scheme=os.getenv("SECURERAG_ENC_SCHEME", "sse"),
-        structured_use_bigrams=os.getenv("SECURERAG_STRUCTURED_BIGRAMS", "1")
-        in {"1", "true", "TRUE", "yes", "YES"},
+        structured_use_bigrams=os.getenv("SECURERAG_STRUCTURED_BIGRAMS", "1") in {"1", "true", "TRUE", "yes", "YES"},
     )
 
     corpus = (
