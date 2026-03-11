@@ -9,8 +9,18 @@ class PrivacyProtocol(Enum):
     PIR = auto()
 
     @property
+    def budget_types(self) -> list[str]:
+        return {
+            PrivacyProtocol.BASELINE: [],
+            PrivacyProtocol.OBFUSCATION: ["distinguishability"],
+            PrivacyProtocol.DIFF_PRIVACY: ["rdp"],
+            PrivacyProtocol.ENCRYPTED_SEARCH: ["he_noise"],
+            PrivacyProtocol.PIR: ["count"],
+        }[self]
+
+    @property
     def requires_budget(self) -> bool:
-        return self is PrivacyProtocol.DIFF_PRIVACY
+        return len(self.budget_types) > 0
 
     @property
     def is_cryptographic(self) -> bool:

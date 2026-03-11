@@ -4,8 +4,10 @@ from abc import ABC, abstractmethod
 import logging
 
 from securerag.backend_client import create_backend
+from securerag.cost import Cost
 from securerag.budget import BudgetManager
 from securerag.config import PrivacyConfig
+from securerag.context import PrivacyContext
 from securerag.errors import ProtocolMismatchError, UnknownProtocolError
 from securerag.models import Document
 from securerag.protocol import PrivacyProtocol
@@ -18,7 +20,7 @@ class PrivacyRetriever(ABC):
         self._validate_compatibility(config.protocol, corpus.protocol)
         self.config = config
         self.corpus = corpus
-        if config.protocol.requires_budget:
+        if config.protocol is PrivacyProtocol.DIFF_PRIVACY:
             import securerag.builtin_mechanisms  # noqa: F401
             from securerag.dp_mechanism import DPMechanismPlugin
 
@@ -31,6 +33,7 @@ class PrivacyRetriever(ABC):
         self._backend = create_backend(config.backend)
         self._logger = logging.getLogger("securerag.retriever")
         self._runtime_llm = None
+        self._ctx: PrivacyContext | None = None
 
     @staticmethod
     def _validate_compatibility(rp: PrivacyProtocol, cp: PrivacyProtocol) -> None:
@@ -83,6 +86,19 @@ class PrivacyRetriever(ABC):
 
     def set_runtime_llm(self, llm) -> None:
         self._runtime_llm = llm
+
+    def with_context(self, ctx: PrivacyContext) -> "PrivacyRetriever":
+        self._ctx = ctx
+        key = self.config.protocol.name
+        if key not in ctx.snapshot():
+            ctx.register_budget(key, self.budget)
+        return self
+
+    def _charge(self, cost: Cost) -> None:
+        if self._ctx is not None:
+            self._ctx.charge(self.config.protocol.name, cost)
+            return
+        self.budget.consume(cost)
 
     def _paraphrase_decoys(self, decoys: list[str], source_query: str) -> list[str]:
         if not self.config.paraphrase_decoys:
