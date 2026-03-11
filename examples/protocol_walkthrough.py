@@ -1,9 +1,11 @@
 import os
 
 from securerag import PrivacyConfig, PrivacyProtocol, SecureRAGAgent
+from securerag.context import PrivacyContext
 from securerag.corpus import CorpusBuilder
+from securerag.cost import RDPCost
 from securerag.llm import ModelAgentLLM
-from securerag.models import RawDocument
+from securerag.models import PrivateQuery, RawDocument
 
 
 def run_protocol(protocol: PrivacyProtocol, backend: str, query: str) -> None:
@@ -40,7 +42,29 @@ def run_protocol(protocol: PrivacyProtocol, backend: str, query: str) -> None:
     )
     agent = SecureRAGAgent.from_config(config, corpus=corpus, llm=llm)
 
-    result = agent.run(query)
+    if protocol is PrivacyProtocol.DIFF_PRIVACY:
+        # Demonstrate the new hookable budget pipeline with a standard string query.
+        ctx = PrivacyContext(strict=True)
+
+        @ctx.register_noise_hook("encode")
+        def _noise_hook(embedding, _config, _budget_state):
+            return embedding, RDPCost(orders=[2.0, 4.0, 8.0, 16.0, 32.0], values=[0.01] * 5)
+
+        @ctx.register_budget_hook("retrieve")
+        def _budget_hook(_docs, _config, _corpus_budgets):
+            return RDPCost(orders=[2.0, 4.0, 8.0, 16.0, 32.0], values=[0.02] * 5)
+
+        agent.retriever.with_context(ctx)
+        with ctx:
+            # PrivateQuery(required_budget=False) demonstrates opt-out semantics.
+            preview_docs = agent.retriever.retrieve(
+                PrivateQuery(text=query, required_budget=False),
+                round_n=0,
+            )
+            print("preview docs (no budget charge):", len(preview_docs))
+            result = agent.run(query)
+    else:
+        result = agent.run(query)
 
     print("=" * 72)
     print("protocol:", protocol.name)

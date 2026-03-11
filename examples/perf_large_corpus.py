@@ -7,6 +7,7 @@ import time
 from dataclasses import asdict, dataclass
 
 from securerag import PrivacyConfig, PrivacyProtocol, SecureRAGAgent
+from securerag.benchmarks import NaturalQuestions, TriviaQA
 from securerag.corpus import CorpusBuilder
 from securerag.llm import ModelAgentLLM
 from securerag.models import RawDocument
@@ -66,9 +67,34 @@ def run_benchmark(
     chunk_size: int,
     overlap: int,
     top_k: int,
+    dataset: str | None = None,
+    split: str = "dev",
+    data_dir: str | None = None,
 ) -> PerfResult:
     query = "summarize q3 risk and vendor concentration"
     docs = build_synthetic_docs(n_docs=n_docs, seed=seed, target_keyword="q3")
+
+    if dataset:
+        ds = dataset.lower()
+        if ds == "nq":
+            ds_corpus, queries = NaturalQuestions.load(
+                split=split,
+                n=n_docs,
+                data_dir=data_dir,
+                protocol=protocol,
+            )
+        elif ds == "triviaqa":
+            ds_corpus, queries = TriviaQA.load(
+                split=split,
+                n=n_docs,
+                data_dir=data_dir,
+                protocol=protocol,
+            )
+        else:
+            raise ValueError("dataset must be one of: nq, triviaqa")
+
+        query = queries[0].question if queries else query
+        docs = []
 
     cfg = PrivacyConfig(
         protocol=protocol,
@@ -84,22 +110,25 @@ def run_benchmark(
 
     t0 = time.perf_counter()
 
-    builder = (
-        CorpusBuilder(protocol, backend_url=backend)
-        .with_privacy_budget(epsilon=cfg.epsilon, delta=cfg.delta)
-        .with_chunk_size(chunk_size)
-        .with_overlap(overlap)
-        .add_documents(docs)
-    )
-
-    if protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
-        builder = builder.with_encrypted_search_scheme(
-            cfg.encrypted_search_scheme,
-            structured_use_bigrams=cfg.structured_use_bigrams,
+    b0 = time.perf_counter()
+    if dataset and docs == []:
+        # Dataset loaders already return a local corpus with the selected protocol.
+        corpus = ds_corpus
+    else:
+        builder = (
+            CorpusBuilder(protocol, backend_url=backend)
+            .with_privacy_budget(epsilon=cfg.epsilon, delta=cfg.delta)
+            .with_chunk_size(chunk_size)
+            .with_overlap(overlap)
+            .add_documents(docs)
         )
 
-    b0 = time.perf_counter()
-    corpus = builder.build_local(workers=4)
+        if protocol is PrivacyProtocol.ENCRYPTED_SEARCH:
+            builder = builder.with_encrypted_search_scheme(
+                cfg.encrypted_search_scheme,
+                structured_use_bigrams=cfg.structured_use_bigrams,
+            )
+        corpus = builder.build_local(workers=4)
     b1 = time.perf_counter()
 
     llm = ModelAgentLLM(
@@ -146,6 +175,9 @@ def main() -> None:
     parser.add_argument("--chunk-size", type=int, default=220)
     parser.add_argument("--overlap", type=int, default=40)
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--dataset", type=str, default="", help="Optional dataset: nq | triviaqa")
+    parser.add_argument("--split", type=str, default="dev", help="Dataset split (e.g., dev/test)")
+    parser.add_argument("--data-dir", type=str, default="", help="Benchmark data directory")
     args = parser.parse_args()
 
     perf = run_benchmark(
@@ -156,6 +188,9 @@ def main() -> None:
         chunk_size=args.chunk_size,
         overlap=args.overlap,
         top_k=args.top_k,
+        dataset=args.dataset or None,
+        split=args.split,
+        data_dir=args.data_dir or None,
     )
 
     print("=== SecureRAG Large Benchmark ===")

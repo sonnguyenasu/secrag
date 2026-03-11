@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from securerag.cost import Cost, RDPCost, zero_cost_like
@@ -93,10 +94,16 @@ class Budget:
         candidate = self._projected_spent(cost_or_sigma)
         return self._effective_value(candidate) <= self._effective_value(self._total)
 
-    def consume(self, cost_or_sigma: Cost | float = 0.0, *, sigma: float | None = None) -> None:
+    def consume(
+        self,
+        cost_or_sigma: Cost | float = 0.0,
+        *,
+        sigma: float | None = None,
+        compose_fn: Callable[[Cost, Cost], Cost] | None = None,
+    ) -> None:
         token: Cost | float = sigma if sigma is not None else cost_or_sigma
         cost = self._normalize_cost(token)
-        candidate = self._spent + cost
+        candidate = compose_fn(self._spent, cost) if compose_fn is not None else (self._spent + cost)
         candidate_val = self._effective_value(candidate)
         limit = self._effective_value(self._total)
         if candidate_val > limit:

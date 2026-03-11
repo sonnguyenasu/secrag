@@ -46,10 +46,56 @@ class PrivacyContext:
         budget = self._budgets.get(budget_key)
         if budget is None:
             return
-        if self._composition_hook is not None:
-            budget._spent = self._composition_hook(budget._spent, cost)
-            return
-        budget.consume(cost)
+        budget.consume(cost, compose_fn=self._composition_hook)
+
+    def apply_noise_hooks(
+        self,
+        operation: str,
+        embedding: list[float],
+        config,
+        budget_state: dict,
+        default_cost: Cost,
+    ) -> tuple[list[float], Cost]:
+        hooks = self._noise_hooks.get(operation, [])
+        if not hooks:
+            return embedding, default_cost
+
+        current_embedding = embedding
+        current_cost = default_cost
+        for hook in hooks:
+            out = hook(current_embedding, config, budget_state)
+            if not isinstance(out, tuple) or len(out) != 2:
+                if self._strict:
+                    raise TypeError(
+                        "Noise hook must return tuple[list[float], Cost]"
+                    )
+                continue
+            current_embedding, current_cost = out
+        return current_embedding, current_cost
+
+    def apply_budget_hooks(
+        self,
+        operation: str,
+        docs,
+        config,
+        corpus_budgets: dict[str, Budget],
+        default_cost: Cost,
+    ) -> Cost:
+        hooks = self._budget_hooks.get(operation, [])
+        if not hooks:
+            return default_cost
+
+        current_cost = default_cost
+        for hook in hooks:
+            out = hook(docs, config, corpus_budgets)
+            if out is None:
+                continue
+            if not isinstance(out, Cost):
+                if self._strict:
+                    raise TypeError("Budget hook must return a Cost object")
+                continue
+            current_cost = out
+        return current_cost
 
     def register_budget(self, key: str, budget: Budget) -> None:
         self._budgets[key] = budget

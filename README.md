@@ -199,6 +199,74 @@ If remote model calls are disabled or unavailable, deterministic local fallback 
   - End-to-end run against strict gRPC backend (`grpc://127.0.0.1:50051`) served by the Rust binary.
 - `examples/protocol_walkthrough.py`
   - Runs multiple protocols and shows resulting corpus type, answer, and budget snapshot.
+- `examples/benchmark_data_quickstart.py`
+  - Loads NQ/TriviaQA benchmark JSONL files and runs retrieval with `PrivateQuery.required_budget` semantics.
+
+## Benchmark data format
+
+Benchmark loaders now read local JSONL files and return `(SecureCorpus, list[QueryRecord])`.
+
+Data root resolution order:
+
+- `SECURERAG_BENCHMARK_DIR` (if set)
+- `./benchmarks_data` (default)
+
+Supported file names:
+
+- `nq_<split>.jsonl` (example: `nq_dev.jsonl`)
+- `triviaqa_<split>.jsonl` (example: `triviaqa_test.jsonl`)
+- `wikipedia_<subset>.jsonl` (example: `wikipedia_2018-12.jsonl`)
+
+### NQ / TriviaQA JSONL schema
+
+Each line is a JSON object. Minimum recommended shape:
+
+```json
+{
+  "question": "What is SecureRAG?",
+  "answers": ["A privacy-aware retrieval framework"],
+  "doc_ids": ["d1"],
+  "required_budget": false,
+  "documents": [
+    {
+      "doc_id": "d1",
+      "text": "SecureRAG is a protocol-driven framework for private retrieval.",
+      "source": "nq"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `documents` is optional but recommended when building corpus + query records in one file.
+- `required_budget` maps to `PrivateQuery.required_budget` behavior.
+
+### Wikipedia JSONL schema
+
+Each line should provide at least a document id and text.
+
+```json
+{"doc_id": "w1", "text": "Alpha document text.", "source": "wiki"}
+{"id": "w2", "context": "Beta document text."}
+```
+
+Either (`doc_id`, `text`) or (`id`, `context`) is accepted.
+
+### Quick usage
+
+Run with benchmark datasets:
+
+```bash
+SECURERAG_BENCHMARK_DIR=./benchmarks_data \
+python examples/benchmark_data_quickstart.py
+```
+
+Benchmark performance script with dataset mode:
+
+```bash
+python examples/perf_large_corpus.py --dataset nq --split dev --data-dir ./benchmarks_data --docs 100
+```
 
 ## Notes and current boundaries
 

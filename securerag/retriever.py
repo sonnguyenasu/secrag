@@ -9,7 +9,7 @@ from securerag.budget import BudgetManager
 from securerag.config import PrivacyConfig
 from securerag.context import PrivacyContext
 from securerag.errors import ProtocolMismatchError, UnknownProtocolError
-from securerag.models import Document
+from securerag.models import Document, PrivateQuery
 from securerag.protocol import PrivacyProtocol
 
 
@@ -41,11 +41,11 @@ class PrivacyRetriever(ABC):
             raise ProtocolMismatchError(f"Retriever={rp.name} but corpus={cp.name}. They must match.")
 
     @abstractmethod
-    def retrieve(self, query: str, round_n: int) -> list[Document]:
+    def retrieve(self, query: str | PrivateQuery, round_n: int) -> list[Document]:
         pass
 
     @abstractmethod
-    def privacy_cost(self, query: str) -> float:
+    def privacy_cost(self, query: str | PrivateQuery) -> float:
         pass
 
     @classmethod
@@ -99,6 +99,13 @@ class PrivacyRetriever(ABC):
             self._ctx.charge(self.config.protocol.name, cost)
             return
         self.budget.consume(cost)
+
+    @staticmethod
+    def _resolve_query(query: str | PrivateQuery) -> tuple[str, bool]:
+        if isinstance(query, PrivateQuery):
+            return query.text, bool(query.required_budget)
+        # Backward-compatible default: plain string queries in DP retrieval are budgeted.
+        return str(query), True
 
     def _paraphrase_decoys(self, decoys: list[str], source_query: str) -> list[str]:
         if not self.config.paraphrase_decoys:
