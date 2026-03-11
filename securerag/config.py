@@ -24,12 +24,12 @@ class PrivacyConfig:
     structured_use_bigrams: bool = True
 
     def __post_init__(self) -> None:
-        if not self.protocol.requires_budget and self.epsilon != 1.0:
+        if self.protocol is not PrivacyProtocol.DIFF_PRIVACY and self.epsilon != 1.0:
             warnings.warn(
                 f"epsilon has no effect for protocol {self.protocol.name}. Use DIFF_PRIVACY.",
                 stacklevel=2,
             )
-        if self.protocol.requires_budget:
+        if self.protocol is PrivacyProtocol.DIFF_PRIVACY:
             orders = [2.0, 4.0, 8.0, 16.0, 32.0]
             per_order_cost = lambda a: a / (2.0 * self.noise_std**2)
             if self.noise_std <= 0.0:

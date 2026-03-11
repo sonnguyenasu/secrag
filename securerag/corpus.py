@@ -9,6 +9,7 @@ from securerag.backend_client import create_backend
 from securerag.builtin_schemes import StructuredPlugin
 from securerag.config import PrivacyConfig
 from securerag.dp_mechanism import DPMechanismPlugin
+from securerag.local_index import LocalEmbeddingIndex
 from securerag.models import CorpusMeta, RawDocument
 from securerag.protocol import PrivacyProtocol
 from securerag.scheme_plugin import EncryptedSchemePlugin
@@ -29,6 +30,7 @@ class SecureCorpus(ABC):
         self.meta = meta
         self.index_id = index_id
         self.extras = extras or {}
+        self.budget_types = list(protocol.budget_types)
 
     def index_size(self) -> int:
         return self.meta.doc_count
@@ -93,13 +95,14 @@ class CorpusBuilder:
         self._chunk_size = 512
         self._overlap = 64
         self._sanitize = True
-        self._backend = create_backend(backend_url)
+        self._backend_url = backend_url
+        self._backend = None
         self._encrypted_search_scheme = "sse"
         self._structured_use_bigrams = True
         self._dp_mechanism_name = "gaussian"
         self._epsilon = 1_000_000.0
         self._delta = 1e-5
-        if config is not None and protocol.requires_budget:
+        if config is not None and protocol is PrivacyProtocol.DIFF_PRIVACY:
             self._dp_mechanism_name = config.dp_mechanism
             self._epsilon = float(config.epsilon)
             self._delta = float(config.delta)
@@ -116,6 +119,11 @@ class CorpusBuilder:
             backend_url=backend_url or config.backend,
             config=config,
         )
+
+    def _get_backend(self):
+        if self._backend is None:
+            self._backend = create_backend(self._backend_url)
+        return self._backend
 
     def with_chunk_size(self, n: int) -> "CorpusBuilder":
         self._chunk_size = n
@@ -160,12 +168,13 @@ class CorpusBuilder:
         return self
 
     def build(self) -> SecureCorpus:
+        backend = self._get_backend()
         docs_payload = [
             {"doc_id": d.doc_id, "text": d.text, "metadata": d.metadata} for d in self._docs
         ]
-        chunks = self._backend.chunk(docs_payload, self._chunk_size, self._overlap)
+        chunks = backend.chunk(docs_payload, self._chunk_size, self._overlap)
         if self._sanitize:
-            chunks = self._backend.sanitize(chunks)
+            chunks = backend.sanitize(chunks)
 
         if self._protocol is PrivacyProtocol.DIFF_PRIVACY:
             import securerag.builtin_mechanisms  # noqa: F401
@@ -187,7 +196,7 @@ class CorpusBuilder:
             extras["encrypted_search_version"] = ENCRYPTED_SEARCH_VERSION
             extras["plugin"] = plugin
 
-        index_payload = self._backend.build_index(
+        index_payload = backend.build_index(
             self._protocol.wire_name,
             chunks,
             epsilon=self._epsilon,
@@ -261,7 +270,7 @@ class CorpusBuilder:
             out.append({**c, "text": text})
         return out
 
-    def build_local(self, *, workers: int = 4) -> SecureCorpus:
+    def build_local(self, *, workers: int = 4, use_rust_if_available: bool = True) -> SecureCorpus:
         chunks = self._local_chunk(self._docs, self._chunk_size, self._overlap)
         if self._sanitize:
             chunks = self._local_sanitize(chunks)
@@ -291,18 +300,28 @@ class CorpusBuilder:
             extras["encrypted_search_version"] = ENCRYPTED_SEARCH_VERSION
             extras["plugin"] = plugin
 
-        index_payload = self._backend.build_index(
-            self._protocol.wire_name,
-            chunks,
-            epsilon=self._epsilon,
-            delta=self._delta,
-            encrypted_search_scheme=self._encrypted_search_scheme
-            if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
-            else "",
-            encrypted_search_version=ENCRYPTED_SEARCH_VERSION
-            if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
-            else "",
-        )
+        index_payload = None
+        if use_rust_if_available:
+            try:
+                index_payload = self._get_backend().build_index(
+                    self._protocol.wire_name,
+                    chunks,
+                    epsilon=self._epsilon,
+                    delta=self._delta,
+                    encrypted_search_scheme=self._encrypted_search_scheme
+                    if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
+                    else "",
+                    encrypted_search_version=ENCRYPTED_SEARCH_VERSION
+                    if self._protocol is PrivacyProtocol.ENCRYPTED_SEARCH
+                    else "",
+                )
+            except Exception:
+                index_payload = None
+
+        if index_payload is None:
+            extras["local_index"] = LocalEmbeddingIndex(chunks)
+            index_payload = {"index_id": "local", "doc_count": len(chunks)}
+
         meta = CorpusMeta(
             doc_count=index_payload["doc_count"],
             chunk_size=self._chunk_size,

@@ -4,21 +4,36 @@ import hashlib
 import math
 import random
 
-from securerag.dp_mechanism import DPMechanismPlugin
+from securerag.cost import RDPCost
+from securerag.mechanism import BudgetMechanism, rdp_cost_to_epsilon
 
 
-class GaussianMechanism(DPMechanismPlugin):
-    def noise(self, embedding: list[float], sigma: float, *, query: str = "") -> list[float]:
+class GaussianMechanism(BudgetMechanism):
+    _ORDERS = [2.0, 4.0, 8.0, 16.0, 32.0]
+
+    def apply(self, data: list[float], sensitivity: float, *, query: str = "") -> list[float]:
         seed = int.from_bytes(hashlib.sha256(query.encode("utf-8")).digest()[:8], "little")
         rng = random.Random(seed)
-        return [v + rng.gauss(0.0, sigma) for v in embedding]
+        return [v + rng.gauss(0.0, sensitivity) for v in data]
 
-    def rdp_cost(self, sigma: float, alpha: float) -> float:
-        return alpha / (2.0 * sigma * sigma)
+    def cost(self, sensitivity: float, **kwargs) -> RDPCost:
+        orders = self.rdp_orders()
+        values = [a / (2.0 * sensitivity * sensitivity) for a in orders]
+        return RDPCost(orders=orders, values=values)
+
+    def rdp_orders(self) -> list[float]:
+        return list(self._ORDERS)
+
+    def to_approx_dp(self, accumulated_cost, delta: float) -> float:
+        if not isinstance(accumulated_cost, RDPCost):
+            raise NotImplementedError
+        return rdp_cost_to_epsilon(accumulated_cost, delta)
 
 
-class LaplaceMechanism(DPMechanismPlugin):
-    def noise(self, embedding: list[float], sigma: float, *, query: str = "") -> list[float]:
+class LaplaceMechanism(BudgetMechanism):
+    _ORDERS = [2.0, 4.0, 8.0, 16.0, 32.0]
+
+    def apply(self, data: list[float], sensitivity: float, *, query: str = "") -> list[float]:
         seed = int.from_bytes(hashlib.sha256(query.encode("utf-8")).digest()[:8], "little")
         rng = random.Random(seed)
 
@@ -27,20 +42,32 @@ class LaplaceMechanism(DPMechanismPlugin):
             sign = -1.0 if u < 0 else 1.0
             return -scale * sign * math.log(1.0 - 2.0 * abs(u))
 
-        return [v + sample_laplace(sigma) for v in embedding]
+        return [v + sample_laplace(sensitivity) for v in data]
 
-    def rdp_cost(self, sigma: float, alpha: float) -> float:
-        if alpha <= 1.0:
-            return 0.0
-        try:
-            log_term = math.log(
-                alpha / (2 * alpha - 1) * math.exp((alpha - 1) / sigma)
-                + (alpha - 1) / (2 * alpha - 1) * math.exp(-alpha / sigma)
-            )
-            return log_term / (alpha - 1)
-        except (ValueError, OverflowError):
-            return float("inf")
+    def cost(self, sensitivity: float, **kwargs) -> RDPCost:
+        values = []
+        for alpha in self.rdp_orders():
+            if alpha <= 1.0:
+                values.append(0.0)
+                continue
+            try:
+                log_term = math.log(
+                    alpha / (2 * alpha - 1) * math.exp((alpha - 1) / sensitivity)
+                    + (alpha - 1) / (2 * alpha - 1) * math.exp(-alpha / sensitivity)
+                )
+                values.append(log_term / (alpha - 1))
+            except (ValueError, OverflowError):
+                values.append(float("inf"))
+        return RDPCost(orders=self.rdp_orders(), values=values)
+
+    def rdp_orders(self) -> list[float]:
+        return list(self._ORDERS)
+
+    def to_approx_dp(self, accumulated_cost, delta: float) -> float:
+        if not isinstance(accumulated_cost, RDPCost):
+            raise NotImplementedError
+        return rdp_cost_to_epsilon(accumulated_cost, delta)
 
 
-DPMechanismPlugin.register("gaussian", GaussianMechanism())
-DPMechanismPlugin.register("laplace", LaplaceMechanism())
+BudgetMechanism.register("gaussian", GaussianMechanism())
+BudgetMechanism.register("laplace", LaplaceMechanism())
