@@ -114,6 +114,15 @@ class PrivacyRetriever(ABC):
         if llm is None:
             return decoys
 
+        role_para = getattr(llm, "paraphrase", None)
+        if callable(role_para):
+            try:
+                out = role_para(decoys, source_query)
+                if isinstance(out, list) and len(out) == len(decoys):
+                    return [str(x) for x in out]
+            except Exception:
+                return decoys
+
         batch_fn = getattr(llm, "paraphrase_decoys", None)
         if callable(batch_fn):
             try:

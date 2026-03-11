@@ -323,3 +323,50 @@ def test_corpus_builder_runs_dp_prepare_corpus_hook(monkeypatch: pytest.MonkeyPa
     assert mechanism.prepare_calls == 1
     assert captured["chunks"]
     assert all(c.get("dp_marker") == "prepared" for c in captured["chunks"])
+
+
+def test_from_config_accepts_callable_llm_for_roles(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("securerag.retriever.create_backend", lambda _url: object())
+
+    cfg = PrivacyConfig(
+        protocol=PrivacyProtocol.OBFUSCATION,
+        k_decoys=2,
+        backend="fake://obf",
+        paraphrase_decoys=True,
+    )
+    corpus = SimpleNamespace(protocol=PrivacyProtocol.OBFUSCATION, index_id="idx-obf")
+
+    def _callable(prompt: str, **kwargs) -> str:
+        _ = kwargs
+        if "Decoys:" in prompt:
+            return "rephrased one\nrephrased two"
+        return "ANSWER"
+
+    agent = SecureRAGAgent.from_config(cfg, corpus=corpus, llm=_callable)
+    out = agent.retriever._paraphrase_decoys(["d1", "d2"], "src")
+
+    assert out == ["rephrased one", "rephrased two"]
+
+
+def test_from_config_wires_paraphraser_for_complete_only_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("securerag.retriever.create_backend", lambda _url: object())
+
+    class _CompleteOnlyLLM:
+        def complete(self, prompt: str, **kwargs) -> str | None:
+            _ = kwargs
+            if "Decoys:" in prompt:
+                return "x one\nx two"
+            return "ANSWER"
+
+    cfg = PrivacyConfig(
+        protocol=PrivacyProtocol.OBFUSCATION,
+        k_decoys=2,
+        backend="fake://obf",
+        paraphrase_decoys=True,
+    )
+    corpus = SimpleNamespace(protocol=PrivacyProtocol.OBFUSCATION, index_id="idx-obf")
+
+    agent = SecureRAGAgent.from_config(cfg, corpus=corpus, llm=_CompleteOnlyLLM())
+    out = agent.retriever._paraphrase_decoys(["d1", "d2"], "src")
+
+    assert out == ["x one", "x two"]
